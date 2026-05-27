@@ -1,0 +1,8 @@
+/target/
+/node_modules/
+/web/*/node_modules/
+/web/*/dist/
+/.env
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

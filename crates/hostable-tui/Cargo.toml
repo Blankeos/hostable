@@ -1,0 +1,14 @@
+[package]
+name = "hostable"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+hostable-core = { path = "../hostable-core" }
+ratatui.workspace = true
+reqwest.workspace = true
+serde.workspace = true

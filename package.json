@@ -1,0 +1,14 @@
+{
+  "name": "hostable",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "web/admin",
+    "web/landing"
+  ],
+  "scripts": {
+    "build:web": "bun --filter '*' run build",
+    "build:admin": "cd web/admin && bun run build",
+    "build:landing": "cd web/landing && bun run build"
+  }
+}

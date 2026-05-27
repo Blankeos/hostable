@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build admin web
+        run: |
+          bun install
+          bun run build:admin
+          mkdir -p target/web-admin
+          cp -R web/admin/dist/. target/web-admin/
+
+      - name: Install cargo-dist
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.sh | sh
+
+      - name: Build release artifacts
+        run: dist build --artifacts=local --output-format=json > dist-manifest.json
+
+      - name: Write release notes
+        run: |
+          cat > notes.md <<'EOF'
+          ## Install
+
+          Install after ssh'ing into your VPS:
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/blankeos/hostable/main/install.sh | sh
+          ```
+          EOF
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file notes.md target/distrib/*
