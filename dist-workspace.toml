@@ -1,0 +1,9 @@
+[workspace]
+members = ["cargo:crates/hostable-tui", "cargo:crates/hostabled"]
+
+[dist]
+cargo-dist-version = "0.30.3"
+ci = "github"
+installers = []
+targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
+allow-dirty = ["ci"]

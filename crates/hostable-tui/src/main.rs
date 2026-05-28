@@ -4,12 +4,13 @@ use anyhow::Result;
 use app::App;
 use clap::Parser;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Debug, Parser)]
@@ -18,6 +19,9 @@ use std::time::Duration;
 struct Args {
     #[arg(long, default_value = "http://127.0.0.1:8080")]
     daemon_url: String,
+
+    #[arg(long, default_value = "/etc/hostable/operator-token")]
+    operator_token: PathBuf,
 }
 
 fn main() -> Result<()> {
@@ -28,7 +32,7 @@ fn main() -> Result<()> {
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let result = run(&mut terminal, args.daemon_url);
+    let result = run(&mut terminal, args.daemon_url, args.operator_token);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -37,23 +41,22 @@ fn main() -> Result<()> {
     result
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, daemon_url: String) -> Result<()> {
-    let mut app = App::new(daemon_url);
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    daemon_url: String,
+    operator_token: PathBuf,
+) -> Result<()> {
+    let mut app = App::new(daemon_url, operator_token);
     app.refresh_servers();
 
     loop {
         terminal.draw(|frame| app.draw(frame))?;
 
-        if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Down | KeyCode::Char('j') => app.next_sidebar_item(),
-                    KeyCode::Up | KeyCode::Char('k') => app.previous_sidebar_item(),
-                    KeyCode::Char('r') => app.refresh_servers(),
-                    _ => {}
-                }
-            }
+        if event::poll(Duration::from_millis(250))?
+            && let Event::Key(key) = event::read()?
+            && app.handle_key(key.code)
+        {
+            break;
         }
     }
 

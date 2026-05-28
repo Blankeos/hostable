@@ -17,6 +17,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: mlugg/setup-zig@v2
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
       - uses: oven-sh/setup-bun@v2
 
       - name: Build admin web
@@ -31,6 +36,48 @@ jobs:
 
       - name: Build release artifacts
         run: dist build --artifacts=local --output-format=json > dist-manifest.json
+
+      - name: Bundle daemon and admin web into release archives
+        run: sh scripts/bundle-release-artifacts.sh
+
+      - name: Verify release archives
+        run: |
+          set -eu
+          for archive in target/distrib/hostable-*unknown-linux-gnu.tar.xz; do
+            tar -tf "$archive" | grep '/hostable$'
+            tar -tf "$archive" | grep '/hostabled$'
+            tar -tf "$archive" | grep '/web-admin/index.html$'
+          done
+
+      - name: Smoke installer in Debian and Ubuntu
+        run: |
+          set -eu
+          smoke_image() {
+            image="$1"
+            docker run --rm --platform linux/amd64 -v "$PWD:/work" -w /work "$image" /bin/sh -lc '
+              set -eu
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates
+              env \
+                HOSTABLE_DOWNLOAD_URL=file:///work/target/distrib/hostable-x86_64-unknown-linux-gnu.tar.xz \
+                HOSTABLE_NO_SUDO=1 \
+                HOSTABLE_SKIP_SERVICE=1 \
+                HOSTABLE_INSTALL_DIR=/tmp/hostable-install/bin \
+                HOSTABLE_STATE_DIR=/tmp/hostable-install/state \
+                HOSTABLE_CONFIG_DIR=/tmp/hostable-install/config \
+                HOSTABLE_SERVER_DIR=/tmp/hostable-install/server \
+                sh /work/install.sh
+              test -x /tmp/hostable-install/bin/hostable
+              test -x /tmp/hostable-install/bin/hostabled
+              test -s /tmp/hostable-install/state/web-admin/index.html
+              test -s /tmp/hostable-install/config/operator-token
+              test -s /tmp/hostable-install/config/secrets.env
+              /tmp/hostable-install/bin/hostable --help >/tmp/hostable-help.txt
+              /tmp/hostable-install/bin/hostabled --help >/tmp/hostabled-help.txt
+            '
+          }
+          smoke_image debian:bookworm-slim
+          smoke_image ubuntu:24.04
 
       - name: Write release notes
         run: |

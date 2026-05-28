@@ -1,4 +1,4 @@
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import { render } from "solid-js/web";
 import "./styles.css";
 
@@ -11,22 +11,112 @@ type ServerRecord = {
   ports: Array<{ port: number; protocol: "tcp" | "udp"; label: string }>;
 };
 
+type ServerView = ServerRecord & {
+  status: string;
+};
+
+type MeResponse = {
+  setup_required: boolean;
+  authenticated: boolean;
+  admin_web_enabled: boolean;
+};
+
+async function fetchMe(): Promise<MeResponse> {
+  const response = await fetch("/api/admin/me", { credentials: "include" });
+  if (!response.ok) throw new Error("Failed to load auth state");
+  return response.json();
+}
+
 async function fetchServers(): Promise<ServerRecord[]> {
-  const response = await fetch("/api/servers");
+  const response = await fetch("/api/servers", { credentials: "include" });
   if (!response.ok) throw new Error("Failed to load servers");
   return response.json();
 }
 
+async function fetchServerStatus(id: string): Promise<string> {
+  const response = await fetch(`/api/servers/${id}/status`, { credentials: "include" });
+  if (!response.ok) return "unknown";
+  const body = await response.json();
+  return body.active ?? "unknown";
+}
+
+async function fetchServerViews(): Promise<ServerView[]> {
+  const servers = await fetchServers();
+  const statuses = await Promise.all(servers.map((server) => fetchServerStatus(server.id)));
+  return servers.map((server, index) => ({ ...server, status: statuses[index] }));
+}
+
 async function command(id: string, action: "start" | "stop") {
-  const response = await fetch(`/api/servers/${id}/${action}`, { method: "POST" });
+  const response = await fetch(`/api/servers/${id}/${action}`, {
+    method: "POST",
+    credentials: "include",
+  });
   if (!response.ok) throw new Error(`Failed to ${action} server`);
+}
+
+async function submitPassword(path: "/api/admin/login" | "/api/admin/setup", password: string) {
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: "request failed" }));
+    throw new Error(body.error ?? "request failed");
+  }
+}
+
+async function logout() {
+  await fetch("/api/admin/logout", { method: "POST", credentials: "include" });
 }
 
 function App() {
   const [password, setPassword] = createSignal("");
-  const [unlocked, setUnlocked] = createSignal(false);
-  const [servers, { refetch }] = createResource(fetchServers);
+  const [error, setError] = createSignal<string | null>(null);
+  const [lastChecked, setLastChecked] = createSignal<string | null>(null);
+  const [me, { refetch: refetchMe }] = createResource(fetchMe);
+  const [servers, { refetch }] = createResource(
+    () => me()?.authenticated,
+    async (authenticated) => {
+      if (!authenticated) {
+        setLastChecked(null);
+        return [];
+      }
+      const views = await fetchServerViews();
+      setLastChecked(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+      return views;
+    },
+  );
   const [busy, setBusy] = createSignal<string | null>(null);
+
+  const authenticated = () => me()?.authenticated === true;
+  const setupRequired = () => me()?.setup_required === true;
+
+  createEffect(() => {
+    if (!authenticated()) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") void refetch();
+    };
+    const interval = window.setInterval(refresh, 5000);
+    document.addEventListener("visibilitychange", refresh);
+    onCleanup(() => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refresh);
+    });
+  });
+
+  const authenticate = async () => {
+    setError(null);
+    try {
+      await submitPassword(setupRequired() ? "/api/admin/setup" : "/api/admin/login", password());
+      setPassword("");
+      await refetchMe();
+      await refetch();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Authentication failed");
+    }
+  };
 
   const run = async (id: string, action: "start" | "stop") => {
     setBusy(`${action}:${id}`);
@@ -44,37 +134,64 @@ function App() {
         <div>
           <p class="eyebrow">Hostable Admin</p>
           <h1>Server control, nothing else.</h1>
-          <p class="muted">Start and stop the game servers already managed by the TUI.</p>
+          <p class="muted">
+            Start and stop the game servers already managed by the TUI. This page is protected by
+            the daemon, not just the browser.
+          </p>
         </div>
 
         <Show
-          when={unlocked()}
+          when={authenticated()}
           fallback={
             <form
               class="login"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (password().trim().length > 0) setUnlocked(true);
+                authenticate();
               }}
             >
               <input
                 type="password"
-                placeholder="Admin password"
+                placeholder={setupRequired() ? "Create admin password" : "Admin password"}
                 value={password()}
                 onInput={(event) => setPassword(event.currentTarget.value)}
               />
-              <button type="submit">Unlock</button>
+              <button type="submit">{setupRequired() ? "Create" : "Unlock"}</button>
+              <Show when={error()}>
+                <p class="error">{error()}</p>
+              </Show>
             </form>
           }
         >
-          <button class="quiet-button" onClick={() => refetch()}>
-            Refresh
-          </button>
+          <div class="toolbar">
+            <Show when={lastChecked()}>
+              <p class="refresh-meta">Updated {lastChecked()}</p>
+            </Show>
+            <div class="toolbar-actions">
+              <button class="quiet-button" onClick={() => refetch()}>
+                Refresh
+              </button>
+              <button
+                class="quiet-button"
+                onClick={async () => {
+                  await logout();
+                  await refetchMe();
+                }}
+              >
+                Lock
+              </button>
+            </div>
+          </div>
         </Show>
       </section>
 
-      <Show when={unlocked()}>
+      <Show when={authenticated()}>
         <section class="server-grid">
+          <Show when={servers.error}>
+            <div class="panel error-panel">
+              {servers.error instanceof Error ? servers.error.message : "Failed to load servers"}
+            </div>
+          </Show>
           <Show when={!servers.loading} fallback={<div class="panel">Loading servers...</div>}>
             <For each={servers() ?? []} fallback={<div class="panel">No servers registered.</div>}>
               {(server) => (
@@ -83,6 +200,10 @@ function App() {
                     <p class="eyebrow">{server.game.replaceAll("_", " ")}</p>
                     <h2>{server.name}</h2>
                     <p class="path">{server.install_path}</p>
+                    <p class={`status ${server.status}`} aria-live="polite">
+                      <span />
+                      {statusLabel(server.status)}
+                    </p>
                   </div>
                   <dl>
                     <div>
@@ -120,3 +241,12 @@ function App() {
 }
 
 render(() => <App />, document.getElementById("root")!);
+
+function statusLabel(status: string) {
+  if (status === "active") return "Online";
+  if (status === "inactive") return "Stopped";
+  if (status === "failed") return "Failed";
+  if (status === "activating") return "Starting";
+  if (status === "deactivating") return "Stopping";
+  return "Unknown";
+}

@@ -251,7 +251,7 @@ Scope:
 Create flow:
 
 1. Ask for server name, folder, Minecraft version, server type, loader/build version when needed, memory, port, online mode, license acceptance, compatible Modrinth options when available, and optional RCON password generation.
-2. Install Java based on Minecraft version. Java 21 should be the default for modern 1.20.5+ servers.
+2. Install Java based on Minecraft version. The MVP default should stay on the Java 17 lane with Minecraft `1.20.4` so fresh Debian Bookworm and Ubuntu Noble VPSes both work from distro packages. Java 21 can be added for modern 1.20.5+ servers once Debian installation is handled explicitly.
 3. Create server directory under `/srv/hostable/servers/<id>/`.
 4. Install Vanilla, Paper, or Fabric server files.
 5. If a Modrinth modpack is selected, download the selected `.mrpack` version and run `mrpack-install` with `--server-dir`.
@@ -429,26 +429,25 @@ Use credentials from env/secrets file rather than storing raw secrets in the mai
 
 ## TUI Plan
 
-Use Ratatui with a clear sidebar:
+Use Ratatui like a small admin app, not a generic nested terminal menu. The top-level navigation stays intentionally short:
 
 ```txt
-Servers
-  <server list>
-  Add server
-  Connect folder
-Backups
-Settings
+Server   Settings
 ```
 
-Server detail tabs:
+The Server screen owns all server operations:
 
 - Overview: status, uptime, ports, path, game version, start/stop/restart.
 - Logs: live journal/log tail with search.
-- Console: send admin commands through adapter console support, usually RCON.
+- Console panel: send admin commands through adapter console support, usually RCON.
 - Config: structured editor plus raw file editor.
 - Mods: Minecraft only for MVP.
 - Backups: run backup now, view history, show S3 upload status.
 - Danger: remove from Hostable, delete files, regenerate service.
+- Add server: launch the create-server wizard in place.
+- Connect folder: import an existing server folder in place.
+
+These are panels and commands inside the selected server context, not separate top-level tabs. The visual style should be sparse: minimal borders, strong active-selection states, command rail near the content, and a footer for status/keybinds.
 
 Create-server wizard:
 
@@ -462,8 +461,9 @@ Create-server wizard:
 
 Interaction model:
 
-- Left sidebar navigation.
-- Main pane changes by selected screen.
+- Top navigation switches between Server and Settings only.
+- On Server, up/down changes the selected server and visible commands operate on that selection.
+- Main pane changes by selected screen or selected server panel.
 - Footer shows keybinds.
 - Long-running operations run as jobs with progress events.
 - Every destructive operation shows an explicit confirmation.
@@ -579,7 +579,7 @@ Release pipeline:
 - Implement registry storage.
 - Implement typed action plans and a dry-run renderer.
 - Implement fake adapter for tests.
-- Add basic TUI shell with sidebar and placeholder screens.
+- Add basic TUI shell with Servers and Settings top-level screens.
 
 Acceptance:
 

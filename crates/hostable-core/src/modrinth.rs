@@ -73,3 +73,23 @@ pub struct ModrinthDependency {
     pub project_id: Option<String>,
     pub dependency_type: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModrinthInstallSelection {
+    pub project_id: String,
+    pub project_type: ModrinthProjectType,
+    pub version_id: String,
+    pub version_number: String,
+    pub file: ModrinthInstallFile,
+    pub dependencies: Vec<ModrinthInstallFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModrinthInstallFile {
+    pub project_id: String,
+    pub version_id: String,
+    pub filename: String,
+    pub url: String,
+    pub sha512: Option<String>,
+    pub size: u64,
+}

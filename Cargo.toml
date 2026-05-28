@@ -10,14 +10,17 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/blankeos/hostable"
 
 [workspace.dependencies]
 anyhow = "1"
+argon2 = "0.5"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -26,6 +29,7 @@ tar = "0.4"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tower-http = { version = "0.6", features = ["fs"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 zstd = "0.13"
 
 [profile.release]
@@ -36,9 +40,3 @@ strip = true
 [profile.dist]
 inherits = "release"
 lto = "thin"
-
-[workspace.metadata.dist]
-cargo-dist-version = "0.30.3"
-ci = "github"
-installers = ["shell"]
-targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]

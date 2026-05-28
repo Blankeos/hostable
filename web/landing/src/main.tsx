@@ -20,7 +20,7 @@ function App() {
           </div>
           <div class="install">
             <p>Install after ssh&apos;ing into your VPS</p>
-            <code>curl -fsSL https://raw.githubusercontent.com/&lt;owner&gt;/hostable/main/install.sh | sh</code>
+            <code>curl -fsSL https://raw.githubusercontent.com/blankeos/hostable/main/install.sh | sh</code>
           </div>
         </div>
 
