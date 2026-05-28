@@ -125,10 +125,17 @@ h2 {
 }
 
 .login,
-.toolbar {
+.toolbar,
+.password-edit {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.authed-stack {
+  display: grid;
+  gap: 12px;
+  justify-items: end;
 }
 
 .toolbar {
@@ -232,9 +239,15 @@ dd {
   .auth-panel,
   .login,
   .toolbar,
+  .password-edit,
+  .authed-stack,
   .toolbar-actions,
   .actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .authed-stack {
+    display: flex;
   }
 }

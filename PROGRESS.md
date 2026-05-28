@@ -14,7 +14,8 @@ The MVP is complete against the current plan: TUI, daemon, Minecraft Vanilla/Pap
 
 - Rust daemon with local API for servers, settings, backups, admin auth, Modrinth, and commands.
 - Ratatui TUI with only two top-level screens: `Server` and `Settings`.
-- Server actions are contextual inside `Server`: create, connect existing folder, start, stop, restart, status, backup, config editing, and console/admin commands.
+- Server opens as a table-first list; create, connect existing folder, server details, logs, config editing, console/admin commands, and install flows are focused subpages instead of side-by-side panels.
+- TUI forms use bordered input widgets with visible cursors and searchable list-based select widgets for game/type choices.
 - Adapter-based game structure for adding more self-hosted games later.
 - Minecraft adapter for Vanilla, Paper, and Fabric.
 - Minecraft Modrinth support for search/install selections, modpacks, individual mods, and metadata tracking.
@@ -22,7 +23,8 @@ The MVP is complete against the current plan: TUI, daemon, Minecraft Vanilla/Pap
 - ARK adapter with install plan, SteamCMD flow, ports/firewall, systemd unit, `GameUserSettings.ini`, `Game.ini`, RCON metadata, and config read/write tests.
 - Manual backup flow with local rolling retention and optional S3-compatible upload/remote retention.
 - Admin web SPA bundled into the Rust-served daemon, gated behind an admin password and disabled unless enabled in settings.
-- Admin web supports login/setup, server list, status polling, start, and stop.
+- Admin web supports login/setup, password changes, server list, status polling, start, and stop.
+- TUI Settings can set/reset the web admin password with the local operator token, and labels backup retention as local/S3 backup counts instead of terse `keep` fields.
 - Landing page copy and install CTA are in place.
 - Debian/Ubuntu best-effort installer with service setup, dependency installation, release archive extraction, operator token, admin assets, and config paths.
 - `cargo-dist` release pipeline and bundling script for combined `hostable` + `hostabled` + web admin archives.

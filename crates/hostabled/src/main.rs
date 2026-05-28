@@ -113,6 +113,7 @@ async fn main() -> Result<()> {
         .route("/api/settings/s3", put(update_s3_settings))
         .route("/api/settings/s3/test", post(test_s3_settings))
         .route("/api/settings/admin-web", put(update_admin_web_settings))
+        .route("/api/admin/password", put(admin_change_password))
         .route("/api/network/public-ip", get(public_ip))
         .route_layer(middleware::from_fn_with_state(
             state.auth.clone(),
@@ -271,15 +272,48 @@ async fn admin_logout(State(state): State<AppState>, headers: HeaderMap) -> Resp
     response
 }
 
+async fn admin_change_password(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ChangePasswordRequest>,
+) -> Result<Response, ApiError> {
+    if request.new_password.len() < 10 {
+        return Err(ApiError::BadRequest(
+            "admin password must be at least 10 characters",
+        ));
+    }
+    let operator_authenticated = state.auth.operator_authenticated_headers(&headers);
+    if !operator_authenticated {
+        require_admin_web_enabled(&state)?;
+        if state.auth.setup_required() {
+            return Err(ApiError::BadRequest("admin password is not configured"));
+        }
+        let Some(current_password) = request.current_password.as_deref() else {
+            return Err(ApiError::Unauthorized);
+        };
+        if !state.auth.verify_password(current_password)? {
+            return Err(ApiError::Unauthorized);
+        }
+    }
+    state.auth.set_password(&request.new_password)?;
+    state.auth.clear_sessions();
+    Ok(authenticated_response(&state.auth))
+}
+
 async fn modrinth_search(
     Query(query): Query<ModrinthSearchQuery>,
 ) -> Result<Json<ModrinthSearchResponse>, ApiError> {
     let facets = modrinth_facets(&query);
+    let search = query
+        .query
+        .as_deref()
+        .or(query.q.as_deref())
+        .unwrap_or_default();
     let mut response = reqwest::Client::new()
         .get("https://api.modrinth.com/v2/search")
         .header("User-Agent", "hostable/0.1.0")
         .query(&[
-            ("query", query.query.as_deref().unwrap_or_default()),
+            ("query", search),
             ("facets", facets.as_str()),
             ("limit", "20"),
         ])
@@ -830,6 +864,12 @@ struct PasswordRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct ChangePasswordRequest {
+    current_password: Option<String>,
+    new_password: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct CreateServerRequest {
     game: GameKind,
     input: CreateServerInput,
@@ -849,6 +889,7 @@ struct ImportServerRequest {
 #[derive(Debug, Deserialize)]
 struct ModrinthSearchQuery {
     query: Option<String>,
+    q: Option<String>,
     project_type: ModrinthProjectType,
     game_version: Option<String>,
     loader: Option<String>,

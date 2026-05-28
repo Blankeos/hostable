@@ -6,6 +6,7 @@ PORT="${HOSTABLE_SMOKE_PORT:-18087}"
 BASE="http://127.0.0.1:$PORT"
 TOKEN="smoke-token"
 PASSWORD="long-enough-password"
+NEW_PASSWORD="long-enough-password-2"
 WORK="$(mktemp -d)"
 
 cleanup() {
@@ -112,6 +113,17 @@ curl -fsS -c "$WORK/cookies.txt" -X POST "$BASE/api/admin/setup" \
   > "$WORK/setup.json"
 
 curl -fsS -b "$WORK/cookies.txt" "$BASE/api/servers" > "$WORK/servers.json"
+
+curl -fsS -X PUT "$BASE/api/admin/password" \
+  -H "x-hostable-operator-token: $TOKEN" \
+  -H 'content-type: application/json' \
+  -d "{\"new_password\":\"$NEW_PASSWORD\"}" \
+  > "$WORK/password-reset.json"
+
+curl -fsS -c "$WORK/new-cookies.txt" -X POST "$BASE/api/admin/login" \
+  -H 'content-type: application/json' \
+  -d "{\"password\":\"$NEW_PASSWORD\"}" \
+  > "$WORK/new-login.json"
 
 curl -fsS -X POST "$BASE/api/servers/create" \
   -H "x-hostable-operator-token: $TOKEN" \

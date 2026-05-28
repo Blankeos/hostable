@@ -1,10 +1,13 @@
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
+        Wrap,
+    },
 };
 use reqwest::{
     blocking::{Client, RequestBuilder},
@@ -12,6 +15,9 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, path::PathBuf};
+
+const HEADER_BORDER: Color = Color::DarkGray;
+const MAIN_BORDER: Color = Color::DarkGray;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -22,12 +28,15 @@ enum Screen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Normal,
+    ServerDetail,
     CreateServer,
     ConnectServer,
     EditS3,
     EditAdminWeb,
+    EditAdminPassword,
     ConsoleCommand,
     PickModrinth,
+    PickChoice,
     EditConfig,
     ViewLogs,
 }
@@ -64,10 +73,35 @@ enum S3Field {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdminPasswordField {
+    NewPassword,
+    ConfirmPassword,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectField {
     Game,
     Name,
     Path,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChoiceTarget {
+    CreateGame,
+    CreateType,
+    ConnectGame,
+}
+
+#[derive(Debug, Clone)]
+enum ChoiceValue {
+    Game(hostable_core::GameKind),
+    ServerType(hostable_core::ServerType),
+}
+
+#[derive(Debug, Clone)]
+struct ChoiceOption {
+    label: &'static str,
+    value: ChoiceValue,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +109,7 @@ struct CreateDraft {
     game: hostable_core::GameKind,
     server_type: hostable_core::ServerType,
     field: CreateField,
+    cursor: usize,
     name: String,
     path: String,
     version: String,
@@ -101,6 +136,7 @@ struct SelectedModrinthProject {
 struct ModrinthPicker {
     kind: ModrinthPickKind,
     query: String,
+    cursor: usize,
     results: Vec<hostable_core::ModrinthSearchHit>,
     selected: usize,
     dirty: bool,
@@ -109,6 +145,7 @@ struct ModrinthPicker {
 #[derive(Debug, Clone)]
 struct ConnectDraft {
     field: ConnectField,
+    cursor: usize,
     game: hostable_core::GameKind,
     name: String,
     path: String,
@@ -118,6 +155,7 @@ struct ConnectDraft {
 #[derive(Debug, Clone)]
 struct S3Draft {
     field: S3Field,
+    cursor: usize,
     local_keep_last: String,
     s3_keep_last: String,
     bucket: String,
@@ -132,7 +170,24 @@ struct S3Draft {
 struct AdminWebDraft {
     enabled: bool,
     domain: String,
+    cursor: usize,
     public_ip: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AdminPasswordDraft {
+    field: AdminPasswordField,
+    cursor: usize,
+    new_password: String,
+    confirm_password: String,
+}
+
+#[derive(Debug, Clone)]
+struct ChoicePicker {
+    target: ChoiceTarget,
+    query: String,
+    cursor: usize,
+    selected: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -157,10 +212,13 @@ pub struct App {
     connect: ConnectDraft,
     s3: S3Draft,
     admin_web: AdminWebDraft,
+    admin_password: AdminPasswordDraft,
+    choice_picker: ChoicePicker,
     modrinth_picker: ModrinthPicker,
     config_editor: ConfigEditor,
     logs_panel: LogsPanel,
     console_command: String,
+    console_cursor: usize,
     selected_server: usize,
     daemon_url: String,
     operator_token: Option<String>,
@@ -191,10 +249,13 @@ impl App {
             connect: ConnectDraft::default(),
             s3: S3Draft::default(),
             admin_web: AdminWebDraft::default(),
+            admin_password: AdminPasswordDraft::default(),
+            choice_picker: ChoicePicker::default(),
             modrinth_picker: ModrinthPicker::default(),
             config_editor: ConfigEditor::default(),
             logs_panel: LogsPanel::default(),
             console_command: String::new(),
+            console_cursor: 0,
             selected_server: 0,
             daemon_url,
             operator_token,
@@ -206,6 +267,10 @@ impl App {
     }
 
     pub fn handle_key(&mut self, code: KeyCode) -> bool {
+        if self.mode == Mode::ServerDetail {
+            self.handle_server_detail_key(code);
+            return false;
+        }
         if self.mode == Mode::CreateServer {
             self.handle_create_key(code);
             return false;
@@ -222,12 +287,20 @@ impl App {
             self.handle_admin_web_key(code);
             return false;
         }
+        if self.mode == Mode::EditAdminPassword {
+            self.handle_admin_password_key(code);
+            return false;
+        }
         if self.mode == Mode::ConsoleCommand {
             self.handle_console_key(code);
             return false;
         }
         if self.mode == Mode::PickModrinth {
             self.handle_modrinth_key(code);
+            return false;
+        }
+        if self.mode == Mode::PickChoice {
+            self.handle_choice_key(code);
             return false;
         }
         if self.mode == Mode::EditConfig {
@@ -271,8 +344,20 @@ impl App {
         match code {
             KeyCode::Down | KeyCode::Char('j') => self.next_server(),
             KeyCode::Up | KeyCode::Char('k') => self.previous_server(),
+            KeyCode::Enter => self.open_server_detail(),
             KeyCode::Char('n') => self.open_create_server(),
             KeyCode::Char('c') => self.open_connect_server(),
+            _ => {}
+        }
+    }
+
+    fn handle_server_detail_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = "Returned to server list".to_string();
+            }
+            KeyCode::Char('r') => self.refresh_servers(),
             KeyCode::Char('s') => self.start_selected(),
             KeyCode::Char('x') => self.stop_selected(),
             KeyCode::Char('R') => self.restart_selected(),
@@ -290,6 +375,7 @@ impl App {
             KeyCode::Char('t') => self.test_s3_settings(),
             KeyCode::Char('w') => self.toggle_admin_web(),
             KeyCode::Char('d') => self.open_admin_web_domain(),
+            KeyCode::Char('p') => self.open_admin_password(),
             _ => {}
         }
     }
@@ -465,6 +551,18 @@ impl App {
         self.post_selected_server_action("backups/run", "backup finished");
     }
 
+    pub fn open_server_detail(&mut self) {
+        if self.active_screen != Screen::Server {
+            return;
+        }
+        let Some(server) = self.servers.get(self.selected_server) else {
+            self.status = "No server selected".to_string();
+            return;
+        };
+        self.mode = Mode::ServerDetail;
+        self.status = format!("Opened {}", server.name);
+    }
+
     pub fn open_create_server(&mut self) {
         self.active_screen = Screen::Server;
         self.mode = Mode::CreateServer;
@@ -483,6 +581,156 @@ impl App {
         self.status = "Type a Modrinth search, Enter searches, Enter again selects".to_string();
     }
 
+    fn open_choice_picker(&mut self, target: ChoiceTarget) {
+        let options = self.choice_options_for(target);
+        let selected = options
+            .iter()
+            .position(|option| self.choice_is_current(target, option))
+            .unwrap_or(0);
+        self.choice_picker = ChoicePicker {
+            target,
+            query: String::new(),
+            cursor: 0,
+            selected,
+        };
+        self.mode = Mode::PickChoice;
+        self.status = "Filter choices, use up/down, Enter selects".to_string();
+    }
+
+    fn close_choice_picker(&mut self, selected: bool) {
+        self.mode = match self.choice_picker.target {
+            ChoiceTarget::CreateGame | ChoiceTarget::CreateType => Mode::CreateServer,
+            ChoiceTarget::ConnectGame => Mode::ConnectServer,
+        };
+        if !selected {
+            self.status = "Choice cancelled".to_string();
+        }
+    }
+
+    fn choice_title(&self) -> &'static str {
+        match self.choice_picker.target {
+            ChoiceTarget::CreateGame => "Choose Game",
+            ChoiceTarget::CreateType => "Choose Server Type",
+            ChoiceTarget::ConnectGame => "Choose Game",
+        }
+    }
+
+    fn choice_options_for(&self, target: ChoiceTarget) -> Vec<ChoiceOption> {
+        match target {
+            ChoiceTarget::CreateGame | ChoiceTarget::ConnectGame => vec![
+                ChoiceOption {
+                    label: "Minecraft",
+                    value: ChoiceValue::Game(hostable_core::GameKind::Minecraft),
+                },
+                ChoiceOption {
+                    label: "ARK: Survival Evolved",
+                    value: ChoiceValue::Game(hostable_core::GameKind::ArkSurvivalEvolved),
+                },
+            ],
+            ChoiceTarget::CreateType => {
+                if self.create.game == hostable_core::GameKind::ArkSurvivalEvolved {
+                    vec![ChoiceOption {
+                        label: "ARK",
+                        value: ChoiceValue::ServerType(
+                            hostable_core::ServerType::ArkSurvivalEvolved,
+                        ),
+                    }]
+                } else {
+                    vec![
+                        ChoiceOption {
+                            label: "Vanilla",
+                            value: ChoiceValue::ServerType(hostable_core::ServerType::Vanilla),
+                        },
+                        ChoiceOption {
+                            label: "Paper",
+                            value: ChoiceValue::ServerType(hostable_core::ServerType::Paper),
+                        },
+                        ChoiceOption {
+                            label: "Fabric",
+                            value: ChoiceValue::ServerType(hostable_core::ServerType::Fabric),
+                        },
+                    ]
+                }
+            }
+        }
+    }
+
+    fn filtered_choice_options(&self) -> Vec<ChoiceOption> {
+        let query = self.choice_picker.query.trim().to_ascii_lowercase();
+        self.choice_options_for(self.choice_picker.target)
+            .into_iter()
+            .filter(|option| {
+                query.is_empty() || option.label.to_ascii_lowercase().contains(query.as_str())
+            })
+            .collect()
+    }
+
+    fn choice_is_current(&self, target: ChoiceTarget, option: &ChoiceOption) -> bool {
+        match (target, &option.value) {
+            (ChoiceTarget::CreateGame, ChoiceValue::Game(game)) => self.create.game == *game,
+            (ChoiceTarget::ConnectGame, ChoiceValue::Game(game)) => self.connect.game == *game,
+            (ChoiceTarget::CreateType, ChoiceValue::ServerType(server_type)) => {
+                self.create.server_type == *server_type
+            }
+            _ => false,
+        }
+    }
+
+    fn next_choice(&mut self) {
+        let options = self.filtered_choice_options();
+        if !options.is_empty() {
+            self.choice_picker.selected = (self.choice_picker.selected + 1) % options.len();
+        }
+    }
+
+    fn previous_choice(&mut self) {
+        let options = self.filtered_choice_options();
+        if options.is_empty() {
+            return;
+        }
+        self.choice_picker.selected = if self.choice_picker.selected == 0 {
+            options.len() - 1
+        } else {
+            self.choice_picker.selected - 1
+        };
+    }
+
+    fn clamp_choice_selection(&mut self) {
+        let len = self.filtered_choice_options().len();
+        if len == 0 {
+            self.choice_picker.selected = 0;
+        } else if self.choice_picker.selected >= len {
+            self.choice_picker.selected = len - 1;
+        }
+    }
+
+    fn apply_choice(&mut self) {
+        let Some(option) = self
+            .filtered_choice_options()
+            .get(self.choice_picker.selected)
+            .cloned()
+        else {
+            self.status = "No choice selected".to_string();
+            return;
+        };
+        match (self.choice_picker.target, option.value) {
+            (ChoiceTarget::CreateGame, ChoiceValue::Game(game)) => {
+                self.create.set_game(game);
+                self.create.dry_run_reviewed = false;
+            }
+            (ChoiceTarget::ConnectGame, ChoiceValue::Game(game)) => {
+                self.connect.set_game(game);
+            }
+            (ChoiceTarget::CreateType, ChoiceValue::ServerType(server_type)) => {
+                self.create.server_type = server_type;
+                self.create.dry_run_reviewed = false;
+            }
+            _ => {}
+        }
+        self.close_choice_picker(true);
+        self.status = format!("Selected {}", option.label);
+    }
+
     pub fn open_connect_server(&mut self) {
         self.active_screen = Screen::Server;
         self.mode = Mode::ConnectServer;
@@ -495,6 +743,7 @@ impl App {
             return;
         }
         self.mode = Mode::EditS3;
+        self.s3.reset_cursor();
         self.status = "Editing S3 settings".to_string();
     }
 
@@ -503,7 +752,17 @@ impl App {
             return;
         }
         self.mode = Mode::EditAdminWeb;
+        self.admin_web.cursor = self.admin_web.domain.chars().count();
         self.status = "Editing admin web domain".to_string();
+    }
+
+    pub fn open_admin_password(&mut self) {
+        if self.active_screen != Screen::Settings {
+            return;
+        }
+        self.mode = Mode::EditAdminPassword;
+        self.admin_password = AdminPasswordDraft::default();
+        self.status = "Set web admin password".to_string();
     }
 
     pub fn toggle_admin_web(&mut self) {
@@ -520,6 +779,7 @@ impl App {
         }
         self.mode = Mode::ConsoleCommand;
         self.console_command.clear();
+        self.console_cursor = 0;
         self.status = "Console command".to_string();
     }
 
@@ -623,131 +883,95 @@ impl App {
     pub fn draw(&mut self, frame: &mut Frame<'_>) {
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(10), Constraint::Length(1)])
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Min(10),
+                Constraint::Length(1),
+            ])
             .split(frame.area());
 
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(22),
-                Constraint::Length(2),
-                Constraint::Min(40),
-            ])
-            .split(rows[0]);
-
-        self.render_sidebar(frame, columns[0]);
+        self.render_topbar(frame, rows[0]);
+        let main_border = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(MAIN_BORDER));
+        let main_area = main_border.inner(rows[1]);
+        frame.render_widget(main_border, rows[1]);
         match self.active_screen {
-            Screen::Server => self.render_servers(frame, columns[2]),
-            Screen::Settings => self.render_settings(frame, columns[2]),
+            Screen::Server => self.render_servers(frame, main_area),
+            Screen::Settings => self.render_settings(frame, main_area),
         }
-        self.render_footer(frame, rows[1]);
+        self.render_footer(frame, rows[2]);
     }
 
-    fn render_sidebar(&self, frame: &mut Frame<'_>, area: Rect) {
-        let nav = Paragraph::new(Text::from(vec![
-            Line::from(Span::styled(
+    fn render_topbar(&self, frame: &mut Frame<'_>, area: Rect) {
+        let active = match self.active_screen {
+            Screen::Server => "Server",
+            Screen::Settings => "Settings",
+        };
+        let context = if self.mode == Mode::Normal {
+            match self.active_screen {
+                Screen::Server => "server list",
+                Screen::Settings => "settings",
+            }
+        } else {
+            server_context_label(self.mode)
+        };
+        let nav = Line::from(vec![
+            Span::styled(
                 "hostable",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "VPS game servers",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(""),
-            nav_line("1 Server", self.active_screen == Screen::Server),
-            nav_line("2 Settings", self.active_screen == Screen::Settings),
-            Line::from(""),
-            Line::from(Span::styled(
-                "tab changes section",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(Span::styled(
-                "q quits",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ]));
-        frame.render_widget(nav, area);
+            ),
+            Span::styled("  VPS game servers", Style::default().fg(Color::DarkGray)),
+            Span::raw("    "),
+            tab_span("1 Server", self.active_screen == Screen::Server),
+            Span::raw("  "),
+            tab_span("2 Settings", self.active_screen == Screen::Settings),
+        ]);
+        let detail = Line::from(vec![
+            Span::styled(active, Style::default().fg(Color::White)),
+            Span::styled(format!("  {context}"), Style::default().fg(Color::DarkGray)),
+        ]);
+        let border = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(HEADER_BORDER));
+        let inner = border.inner(area);
+        frame.render_widget(border, area);
+        frame.render_widget(Paragraph::new(Text::from(vec![nav, detail])), inner);
     }
 
     fn render_servers(&self, frame: &mut Frame<'_>, area: Rect) {
+        match self.mode {
+            Mode::Normal => self.render_server_table(frame, area),
+            Mode::ServerDetail => self.render_server_detail(frame, area),
+            Mode::CreateServer => self.render_create_server(frame, area),
+            Mode::ConnectServer => self.render_connect_server(frame, area),
+            Mode::PickChoice => self.render_choice_picker(frame, area),
+            Mode::PickModrinth => self.render_modrinth_picker(frame, area),
+            Mode::ConsoleCommand => self.render_console_command(frame, area),
+            Mode::EditConfig => self.render_config_editor(frame, area),
+            Mode::ViewLogs => self.render_logs_panel(frame, area),
+            Mode::EditS3 | Mode::EditAdminWeb | Mode::EditAdminPassword => {
+                self.render_server_table(frame, area)
+            }
+        }
+    }
+
+    fn render_server_table(&self, frame: &mut Frame<'_>, area: Rect) {
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(8)])
+            .constraints([Constraint::Length(3), Constraint::Min(4)])
             .split(area);
-
-        self.render_server_toolbar(frame, rows[0]);
-
-        if rows[1].width >= 92 {
-            let columns = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(32),
-                    Constraint::Length(2),
-                    Constraint::Min(32),
-                    Constraint::Length(2),
-                    Constraint::Length(25),
-                ])
-                .split(rows[1]);
-            self.render_server_list(frame, columns[0]);
-            self.render_server_workspace(frame, columns[2], false);
-            self.render_server_actions(frame, columns[4]);
-        } else {
-            let columns = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Length(30),
-                    Constraint::Length(2),
-                    Constraint::Min(30),
-                ])
-                .split(rows[1]);
-            self.render_server_list(frame, columns[0]);
-            self.render_server_workspace(frame, columns[2], true);
-        }
-    }
-
-    fn render_server_workspace(
-        &self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        show_actions_inline: bool,
-    ) {
-        if self.mode == Mode::CreateServer {
-            self.render_create_server(frame, area);
-        } else if self.mode == Mode::ConnectServer {
-            self.render_connect_server(frame, area);
-        } else if self.mode == Mode::PickModrinth {
-            self.render_modrinth_picker(frame, area);
-        } else if self.mode == Mode::ConsoleCommand {
-            self.render_console_command(frame, area);
-        } else if self.mode == Mode::EditConfig {
-            self.render_config_editor(frame, area);
-        } else if self.mode == Mode::ViewLogs {
-            self.render_logs_panel(frame, area);
-        } else {
-            self.render_server_detail(frame, area, show_actions_inline);
-        }
-    }
-
-    fn render_server_toolbar(&self, frame: &mut Frame<'_>, area: Rect) {
         let selected = self
             .servers
             .get(self.selected_server)
             .map(|server| server.name.as_str())
             .unwrap_or("none");
-
-        let context = server_context_label(self.mode);
-        let actions = if self.mode == Mode::Normal {
-            action_spans(&[("n", "new"), ("c", "connect"), ("r", "refresh")])
-        } else {
-            task_action_spans(self.mode)
-        };
-
-        let toolbar = Paragraph::new(Text::from(vec![
+        let heading = Paragraph::new(Text::from(vec![
             Line::from(vec![
                 Span::styled(
-                    "Server",
+                    "Servers",
                     Style::default()
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
@@ -756,87 +980,79 @@ impl App {
                     format!("  {} registered", self.servers.len()),
                     Style::default().fg(Color::DarkGray),
                 ),
-                Span::styled(format!("  {context}"), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("  selected: {selected}"),
+                    Style::default().fg(Color::DarkGray),
+                ),
             ]),
-            Line::from(actions),
-            Line::from(vec![
-                Span::styled("selected", Style::default().fg(Color::DarkGray)),
-                Span::raw(": "),
-                Span::styled(selected.to_string(), Style::default().fg(Color::White)),
-                Span::raw("  "),
-                Span::styled("up/down", Style::default().fg(Color::Green)),
-                Span::raw(" select"),
-            ]),
-        ]));
-        frame.render_widget(toolbar, area);
-    }
-
-    fn render_server_list(&self, frame: &mut Frame<'_>, area: Rect) {
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(1)])
-            .split(area);
-        let heading = Paragraph::new(Text::from(vec![
-            section_heading("Servers"),
-            Line::from(Span::styled(
-                "up/down to choose target",
-                Style::default().fg(Color::DarkGray),
-            )),
+            Line::from(action_spans(&[
+                ("up/down", "select"),
+                ("enter", "details"),
+                ("n", "new"),
+                ("c", "connect"),
+                ("r", "refresh"),
+            ])),
         ]));
         frame.render_widget(heading, rows[0]);
 
-        let items = if self.servers.is_empty() {
-            vec![ListItem::new(Text::from(vec![
-                Line::from(Span::styled(
-                    "No servers yet",
-                    Style::default().fg(Color::DarkGray),
-                )),
-                Line::from(Span::styled(
-                    "n create   c connect",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ]))]
-        } else {
-            self.servers
-                .iter()
-                .map(|server| {
-                    let status = self.server_status(&server.id.0);
-                    ListItem::new(Text::from(vec![
-                        Line::from(vec![
-                            Span::styled(
-                                server.name.clone(),
-                                Style::default().add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw("  "),
-                            Span::styled(status_label(status), status_style(status)),
-                        ]),
-                        Line::from(Span::styled(
-                            format!(
-                                "{}  {}",
-                                game_label(server.game),
-                                server.install_path.display()
-                            ),
-                            Style::default().fg(Color::DarkGray),
-                        )),
-                    ]))
-                })
-                .collect()
-        };
-
-        let mut state = ListState::default();
-        if !self.servers.is_empty() {
-            state.select(Some(self.selected_server));
+        if self.servers.is_empty() {
+            let empty = Paragraph::new(Text::from(vec![
+                section_heading("No servers registered"),
+                Line::from(""),
+                Line::from(action_spans(&[
+                    ("n", "new server"),
+                    ("c", "connect folder"),
+                ])),
+            ]))
+            .wrap(Wrap { trim: true });
+            frame.render_widget(empty, rows[1]);
+            return;
         }
 
-        let list = List::new(items).highlight_symbol("> ").highlight_style(
+        let table_rows = self.servers.iter().map(|server| {
+            let status = self.server_status(&server.id.0);
+            let ports = server
+                .ports
+                .iter()
+                .map(|port| format!("{}/{}", port.port, protocol_label(port.protocol)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Row::new(vec![
+                Cell::from(server.name.clone()),
+                Cell::from(status_label(status)).style(status_style(status)),
+                Cell::from(game_label(server.game)),
+                Cell::from(server.install_path.display().to_string()),
+                Cell::from(ports),
+            ])
+        });
+        let header = Row::new(vec!["Name", "Status", "Game", "Folder", "Ports"]).style(
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
+        let mut state = TableState::default();
+        state.select(Some(self.selected_server));
+        let table = Table::new(
+            table_rows,
+            [
+                Constraint::Length(24),
+                Constraint::Length(12),
+                Constraint::Length(14),
+                Constraint::Min(22),
+                Constraint::Length(18),
+            ],
+        )
+        .header(header)
+        .highlight_symbol("> ")
+        .row_highlight_style(
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         );
-        frame.render_stateful_widget(list, rows[1], &mut state);
+        frame.render_stateful_widget(table, rows[1], &mut state);
     }
 
-    fn render_server_detail(&self, frame: &mut Frame<'_>, area: Rect, show_actions_inline: bool) {
+    fn render_server_detail(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(server) = self.servers.get(self.selected_server) else {
             let empty = Paragraph::new(Text::from(vec![
                 section_heading("Get started"),
@@ -868,7 +1084,7 @@ impl App {
             .unwrap_or_else(|| "No public port".to_string());
         let status = self.server_status(&server.id.0);
 
-        let mut lines = vec![
+        let lines = vec![
             Line::from(Span::styled(
                 server.name.clone(),
                 Style::default()
@@ -885,11 +1101,9 @@ impl App {
             Line::from(""),
             section_heading("Connect"),
             muted_kv("address", join),
-        ];
-        if show_actions_inline {
-            lines.push(Line::from(""));
-            lines.push(section_heading("Controls"));
-            lines.push(Line::from(action_spans(&[
+            Line::from(""),
+            section_heading("Controls"),
+            Line::from(action_spans(&[
                 ("s", "start"),
                 ("x", "stop"),
                 ("R", "restart"),
@@ -897,57 +1111,9 @@ impl App {
                 ("L", "logs"),
                 ("m", "command"),
                 ("f", "config"),
-            ])));
-        }
-        frame.render_widget(
-            Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
-            area,
-        );
-    }
-
-    fn render_server_actions(&self, frame: &mut Frame<'_>, area: Rect) {
-        let mut lines = vec![section_heading("Controls")];
-
-        if self.mode != Mode::Normal {
-            lines.push(section_heading("Current task"));
-            lines.push(Line::from(Span::styled(
-                server_context_label(self.mode),
-                Style::default().fg(Color::White),
-            )));
-            lines.push(Line::from(task_action_spans(self.mode)));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Esc returns to the selected server controls.",
-                Style::default().fg(Color::DarkGray),
-            )));
-            frame.render_widget(
-                Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
-                area,
-            );
-            return;
-        }
-
-        lines.push(Line::from(action_spans(&[("up/down", "select")])));
-        lines.push(Line::from(action_spans(&[("n", "new"), ("c", "connect")])));
-        lines.push(Line::from(action_spans(&[("r", "refresh")])));
-        lines.push(Line::from(""));
-
-        if self.servers.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "No server selected yet.",
-                Style::default().fg(Color::DarkGray),
-            )));
-        } else {
-            lines.push(section_heading("Selected server"));
-            lines.push(Line::from(action_spans(&[("s", "start"), ("x", "stop")])));
-            lines.push(Line::from(action_spans(&[
-                ("R", "restart"),
-                ("b", "backup"),
-            ])));
-            lines.push(Line::from(action_spans(&[("L", "logs"), ("m", "command")])));
-            lines.push(Line::from(action_spans(&[("f", "config")])));
-        }
-
+                ("esc", "server list"),
+            ])),
+        ];
         frame.render_widget(
             Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
             area,
@@ -958,9 +1124,9 @@ impl App {
         let game = game_label(self.create.game);
         let server_type = server_type_label(self.create.server_type.clone());
         let license = if self.create.accepted_license {
-            "accepted"
+            "[x] accepted"
         } else {
-            "required"
+            "[ ] required"
         };
         let submit = if self.create.dry_run_reviewed {
             "Enter install"
@@ -968,27 +1134,108 @@ impl App {
             "Enter dry-run"
         };
         let modrinth = self.create.modrinth.summary();
-        let text = format!(
-            "Create server\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n{submit}\nEsc cancel",
-            self.create.field_line(CreateField::Game, "Game", game),
-            self.create
-                .field_line(CreateField::Type, "Type", server_type),
-            self.create
-                .field_line(CreateField::Name, "Name", &self.create.name),
-            self.create
-                .field_line(CreateField::Path, "Folder", &self.create.path),
-            self.create
-                .field_line(CreateField::Version, "Version", &self.create.version),
-            self.create
-                .field_line(CreateField::Memory, "Memory MB", &self.create.memory_mb),
-            self.create
-                .field_line(CreateField::Motd, "MOTD", &self.create.motd),
-            self.create
-                .field_line(CreateField::Modrinth, "Modrinth", &modrinth),
-            self.create
-                .field_line(CreateField::License, "License", license),
+        let viewport = form_viewport(area, 9, self.create.field.index());
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(vec![
+                    Span::styled(
+                        "Create Server",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(format!("  {submit}"), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("  {}", viewport.range_label()),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+                Line::from(action_spans(&[
+                    ("tab", "next field"),
+                    ("shift-tab", "previous"),
+                    ("enter", "open/save"),
+                    ("esc", "cancel"),
+                ])),
+            ])),
+            viewport.header,
         );
-        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), area);
+        for (index, row) in viewport.rows {
+            match index {
+                0 => render_select_field(
+                    frame,
+                    row,
+                    "Game",
+                    game,
+                    self.create.field == CreateField::Game,
+                    "Enter opens searchable list",
+                ),
+                1 => render_select_field(
+                    frame,
+                    row,
+                    "Type",
+                    server_type,
+                    self.create.field == CreateField::Type,
+                    "Enter opens searchable list",
+                ),
+                2 => render_input_field(
+                    frame,
+                    row,
+                    "Name",
+                    &self.create.name,
+                    self.create.field == CreateField::Name,
+                    self.create.cursor,
+                ),
+                3 => render_input_field(
+                    frame,
+                    row,
+                    "Folder",
+                    &self.create.path,
+                    self.create.field == CreateField::Path,
+                    self.create.cursor,
+                ),
+                4 => render_input_field(
+                    frame,
+                    row,
+                    "Version",
+                    &self.create.version,
+                    self.create.field == CreateField::Version,
+                    self.create.cursor,
+                ),
+                5 => render_input_field(
+                    frame,
+                    row,
+                    "Memory MB",
+                    &self.create.memory_mb,
+                    self.create.field == CreateField::Memory,
+                    self.create.cursor,
+                ),
+                6 => render_input_field(
+                    frame,
+                    row,
+                    "MOTD",
+                    &self.create.motd,
+                    self.create.field == CreateField::Motd,
+                    self.create.cursor,
+                ),
+                7 => render_select_field(
+                    frame,
+                    row,
+                    "Modrinth",
+                    &modrinth,
+                    self.create.field == CreateField::Modrinth,
+                    "Enter picks modpack/mods",
+                ),
+                8 => render_select_field(
+                    frame,
+                    row,
+                    "License",
+                    license,
+                    self.create.field == CreateField::License,
+                    "Space toggles",
+                ),
+                _ => {}
+            }
+        }
     }
 
     fn render_modrinth_picker(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -997,35 +1244,150 @@ impl App {
             ModrinthPickKind::Mod => "Mod",
         };
         let loader = modrinth_loader(&self.create.server_type).unwrap_or("any");
-        let mut lines = vec![
-            "Modrinth picker".to_string(),
-            String::new(),
-            format!("Kind: {kind}  [tab] switch"),
-            format!("Minecraft: {}  Loader: {loader}", self.create.version),
-            format!("Search: {}", self.modrinth_picker.query),
-            String::new(),
-        ];
-        if self.modrinth_picker.results.is_empty() {
-            lines.push("Enter searches Modrinth.".to_string());
-        } else {
-            for (index, hit) in self.modrinth_picker.results.iter().take(8).enumerate() {
-                let marker = if index == self.modrinth_picker.selected {
-                    ">"
-                } else {
-                    " "
-                };
-                lines.push(format!(
-                    "{marker} {}  {} downloads",
-                    hit.title, hit.downloads
-                ));
-            }
-        }
-        lines.push(String::new());
-        lines.push("Enter select   Esc back".to_string());
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(6),
+            ])
+            .split(area);
         frame.render_widget(
-            Paragraph::new(lines.join("\n")).wrap(Wrap { trim: true }),
-            area,
+            Paragraph::new(Text::from(vec![
+                Line::from(vec![
+                    Span::styled(
+                        "Modrinth Picker",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!(
+                            "  {kind}  Minecraft {}  Loader {loader}",
+                            self.create.version
+                        ),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+                Line::from(action_spans(&[
+                    ("tab", "modpack/mod"),
+                    ("enter", "search/select"),
+                    ("up/down", "result"),
+                    ("esc", "back"),
+                ])),
+            ])),
+            rows[0],
         );
+        render_input_field(
+            frame,
+            rows[1],
+            "Search",
+            &self.modrinth_picker.query,
+            true,
+            self.modrinth_picker.cursor,
+        );
+
+        let items = if self.modrinth_picker.results.is_empty() {
+            vec![ListItem::new(Text::from(vec![
+                Line::from("Type a query, then press Enter."),
+                Line::from(Span::styled(
+                    "Results stay in this list; up/down changes the highlighted result.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]))]
+        } else {
+            self.modrinth_picker
+                .results
+                .iter()
+                .map(|hit| {
+                    ListItem::new(Text::from(vec![
+                        Line::from(vec![
+                            Span::styled(
+                                hit.title.clone(),
+                                Style::default().add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!("  {} downloads", hit.downloads),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                        ]),
+                        Line::from(Span::styled(
+                            hit.description.clone(),
+                            Style::default().fg(Color::DarkGray),
+                        )),
+                    ]))
+                })
+                .collect()
+        };
+        let mut state = ListState::default();
+        if !self.modrinth_picker.results.is_empty() {
+            state.select(Some(self.modrinth_picker.selected));
+        }
+        let list = List::new(items).highlight_symbol("> ").highlight_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        );
+        frame.render_stateful_widget(list, rows[2], &mut state);
+    }
+
+    fn render_choice_picker(&self, frame: &mut Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(4),
+            ])
+            .split(area);
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(Span::styled(
+                    self.choice_title(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(action_spans(&[
+                    ("type", "filter"),
+                    ("up/down", "select"),
+                    ("enter", "use"),
+                    ("esc", "cancel"),
+                ])),
+            ])),
+            rows[0],
+        );
+        render_input_field(
+            frame,
+            rows[1],
+            "Filter",
+            &self.choice_picker.query,
+            true,
+            self.choice_picker.cursor,
+        );
+        let options = self.filtered_choice_options();
+        let items = if options.is_empty() {
+            vec![ListItem::new(Span::styled(
+                "No matches",
+                Style::default().fg(Color::DarkGray),
+            ))]
+        } else {
+            options
+                .iter()
+                .map(|option| ListItem::new(option.label))
+                .collect()
+        };
+        let mut state = ListState::default();
+        if !options.is_empty() {
+            state.select(Some(self.choice_picker.selected));
+        }
+        let list = List::new(items).highlight_symbol("> ").highlight_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        );
+        frame.render_stateful_widget(list, rows[2], &mut state);
     }
 
     fn render_connect_server(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -1035,15 +1397,59 @@ impl App {
         } else {
             "Enter dry-run"
         };
-        let text = format!(
-            "Connect folder\n\n{}\n{}\n{}\n\n{submit}\nEsc cancel",
-            self.connect.field_line(ConnectField::Game, "Game", game),
-            self.connect
-                .field_line(ConnectField::Name, "Name", &self.connect.name),
-            self.connect
-                .field_line(ConnectField::Path, "Folder", &self.connect.path),
+        let viewport = form_viewport(area, 3, self.connect.field.index());
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(vec![
+                    Span::styled(
+                        "Connect Folder",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(format!("  {submit}"), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("  {}", viewport.range_label()),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+                Line::from(action_spans(&[
+                    ("tab", "next field"),
+                    ("enter", "open/save"),
+                    ("esc", "cancel"),
+                ])),
+            ])),
+            viewport.header,
         );
-        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), area);
+        for (index, row) in viewport.rows {
+            match index {
+                0 => render_select_field(
+                    frame,
+                    row,
+                    "Game",
+                    game,
+                    self.connect.field == ConnectField::Game,
+                    "Enter opens searchable list",
+                ),
+                1 => render_input_field(
+                    frame,
+                    row,
+                    "Name",
+                    &self.connect.name,
+                    self.connect.field == ConnectField::Name,
+                    self.connect.cursor,
+                ),
+                2 => render_input_field(
+                    frame,
+                    row,
+                    "Folder",
+                    &self.connect.path,
+                    self.connect.field == ConnectField::Path,
+                    self.connect.cursor,
+                ),
+                _ => {}
+            }
+        }
     }
 
     fn render_console_command(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -1052,11 +1458,40 @@ impl App {
             .get(self.selected_server)
             .map(|server| server.name.as_str())
             .unwrap_or("server");
-        let text = format!(
-            "Send command\n\n{server_name}\n\n> {}\n\nEnter send\nEsc cancel",
-            self.console_command
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(1),
+            ])
+            .split(area);
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(vec![
+                    Span::styled(
+                        "Send Command",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("  {server_name}"),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+                Line::from(action_spans(&[("enter", "send"), ("esc", "cancel")])),
+            ])),
+            rows[0],
         );
-        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), area);
+        render_input_field(
+            frame,
+            rows[1],
+            "Command",
+            &self.console_command,
+            true,
+            self.console_cursor,
+        );
     }
 
     fn render_config_editor(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -1125,98 +1560,269 @@ impl App {
     }
 
     fn render_settings(&self, frame: &mut Frame<'_>, area: Rect) {
-        let text = if self.mode == Mode::EditS3 {
-            Text::from(format!(
-                "Backups\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\nEnter save\nEsc cancel",
-                self.s3.field_line(
-                    S3Field::LocalKeepLast,
-                    "Keep local",
-                    &self.s3.local_keep_last
-                ),
-                self.s3
-                    .field_line(S3Field::S3KeepLast, "Keep S3", &self.s3.s3_keep_last),
-                self.s3
-                    .field_line(S3Field::Bucket, "Bucket", &self.s3.bucket),
-                self.s3
-                    .field_line(S3Field::Region, "Region", &self.s3.region),
-                self.s3
-                    .field_line(S3Field::Endpoint, "Endpoint", &self.s3.endpoint_url),
-                self.s3
-                    .field_line(S3Field::Prefix, "Prefix", &self.s3.prefix),
-                self.s3
-                    .field_line(S3Field::AccessKeyEnv, "Access env", &self.s3.access_key_env),
-                self.s3
-                    .field_line(S3Field::SecretKeyEnv, "Secret env", &self.s3.secret_key_env),
-            ))
-        } else if self.mode == Mode::EditAdminWeb {
-            Text::from(format!(
-                "Admin web\n\nDomain\n  {}\n\nYou can also add a domain by typing it here. Use this VPS IP for the domain provider: {}\n\nEnter save\nEsc cancel",
-                self.admin_web.domain,
-                self.admin_web.public_ip_label(),
-            ))
-        } else {
-            let admin_state = if self.admin_web.enabled { "on" } else { "off" };
-            let admin_target = self.admin_web.display_target();
-            Text::from(vec![
-                Line::from(Span::styled(
-                    "Settings",
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(""),
-                section_heading("S3 backups"),
-                muted_kv("keep local", self.s3.local_keep_last.clone()),
-                muted_kv("keep S3", self.s3.s3_keep_last.clone()),
-                muted_kv("bucket", empty_label(&self.s3.bucket).to_string()),
-                muted_kv("region", empty_label(&self.s3.region).to_string()),
-                muted_kv("endpoint", empty_label(&self.s3.endpoint_url).to_string()),
-                muted_kv("prefix", empty_label(&self.s3.prefix).to_string()),
-                muted_kv(
-                    "access env",
-                    empty_label(&self.s3.access_key_env).to_string(),
-                ),
-                muted_kv(
-                    "secret env",
-                    empty_label(&self.s3.secret_key_env).to_string(),
-                ),
-                Line::from(action_spans(&[("e", "edit"), ("t", "test connection")])),
-                Line::from(""),
-                section_heading("Admin web"),
-                muted_kv("state", admin_state.to_string()),
-                muted_kv("target", admin_target),
-                muted_kv("VPS IP", self.admin_web.public_ip_label()),
-                Line::from(action_spans(&[("w", "toggle"), ("d", "domain")])),
-                Line::from(Span::styled(
-                    "Use this IP at your domain provider.",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ])
-        };
+        if self.mode == Mode::EditS3 {
+            let viewport = form_viewport(area, 8, self.s3.field.index());
+            frame.render_widget(
+                Paragraph::new(Text::from(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            "Backup Settings",
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("  {}", viewport.range_label()),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]),
+                    Line::from(action_spans(&[
+                        ("tab", "next field"),
+                        ("enter", "save"),
+                        ("esc", "cancel"),
+                    ])),
+                ])),
+                viewport.header,
+            );
+            for (index, row) in viewport.rows {
+                match index {
+                    0 => render_input_field(
+                        frame,
+                        row,
+                        "Local backups to keep",
+                        &self.s3.local_keep_last,
+                        self.s3.field == S3Field::LocalKeepLast,
+                        self.s3.cursor,
+                    ),
+                    1 => render_input_field(
+                        frame,
+                        row,
+                        "S3 backups to keep",
+                        &self.s3.s3_keep_last,
+                        self.s3.field == S3Field::S3KeepLast,
+                        self.s3.cursor,
+                    ),
+                    2 => render_input_field(
+                        frame,
+                        row,
+                        "Bucket",
+                        &self.s3.bucket,
+                        self.s3.field == S3Field::Bucket,
+                        self.s3.cursor,
+                    ),
+                    3 => render_input_field(
+                        frame,
+                        row,
+                        "Region",
+                        &self.s3.region,
+                        self.s3.field == S3Field::Region,
+                        self.s3.cursor,
+                    ),
+                    4 => render_input_field(
+                        frame,
+                        row,
+                        "Endpoint",
+                        &self.s3.endpoint_url,
+                        self.s3.field == S3Field::Endpoint,
+                        self.s3.cursor,
+                    ),
+                    5 => render_input_field(
+                        frame,
+                        row,
+                        "Prefix",
+                        &self.s3.prefix,
+                        self.s3.field == S3Field::Prefix,
+                        self.s3.cursor,
+                    ),
+                    6 => render_input_field(
+                        frame,
+                        row,
+                        "Access env",
+                        &self.s3.access_key_env,
+                        self.s3.field == S3Field::AccessKeyEnv,
+                        self.s3.cursor,
+                    ),
+                    7 => render_input_field(
+                        frame,
+                        row,
+                        "Secret env",
+                        &self.s3.secret_key_env,
+                        self.s3.field == S3Field::SecretKeyEnv,
+                        self.s3.cursor,
+                    ),
+                    _ => {}
+                }
+            }
+            return;
+        }
+
+        if self.mode == Mode::EditAdminWeb {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Length(3),
+                    Constraint::Min(2),
+                ])
+                .split(area);
+            frame.render_widget(
+                Paragraph::new(Text::from(vec![
+                    Line::from(Span::styled(
+                        "Admin Web",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(action_spans(&[("enter", "save"), ("esc", "cancel")])),
+                ])),
+                rows[0],
+            );
+            render_input_field(
+                frame,
+                rows[1],
+                "Domain",
+                &self.admin_web.domain,
+                true,
+                self.admin_web.cursor,
+            );
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "Point your domain provider at {}.",
+                    self.admin_web.public_ip_label()
+                ))
+                .style(Style::default().fg(Color::DarkGray))
+                .wrap(Wrap { trim: true }),
+                rows[2],
+            );
+            return;
+        }
+
+        if self.mode == Mode::EditAdminPassword {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Length(3),
+                    Constraint::Length(3),
+                    Constraint::Min(2),
+                ])
+                .split(area);
+            frame.render_widget(
+                Paragraph::new(Text::from(vec![
+                    Line::from(Span::styled(
+                        "Admin Web Password",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(action_spans(&[
+                        ("tab", "next field"),
+                        ("enter", "save"),
+                        ("esc", "cancel"),
+                    ])),
+                ])),
+                rows[0],
+            );
+            render_secret_input_field(
+                frame,
+                rows[1],
+                "New password",
+                &self.admin_password.new_password,
+                self.admin_password.field == AdminPasswordField::NewPassword,
+                self.admin_password.cursor,
+            );
+            render_secret_input_field(
+                frame,
+                rows[2],
+                "Confirm password",
+                &self.admin_password.confirm_password,
+                self.admin_password.field == AdminPasswordField::ConfirmPassword,
+                self.admin_password.cursor,
+            );
+            frame.render_widget(
+                Paragraph::new("Must be at least 10 characters. This sets or resets the password used by the browser admin UI.")
+                    .style(Style::default().fg(Color::DarkGray))
+                    .wrap(Wrap { trim: true }),
+                rows[3],
+            );
+            return;
+        }
+
+        let admin_state = if self.admin_web.enabled { "on" } else { "off" };
+        let admin_target = self.admin_web.display_target();
+        let text = Text::from(vec![
+            Line::from(Span::styled(
+                "Settings",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            section_heading("S3 backups"),
+            muted_kv("local backup copies", self.s3.local_keep_last.clone()),
+            muted_kv("S3 backup copies", self.s3.s3_keep_last.clone()),
+            Line::from(Span::styled(
+                "Retention count: keeps the newest N backups and prunes older ones.",
+                Style::default().fg(Color::DarkGray),
+            )),
+            muted_kv("bucket", empty_label(&self.s3.bucket).to_string()),
+            muted_kv("region", empty_label(&self.s3.region).to_string()),
+            muted_kv("endpoint", empty_label(&self.s3.endpoint_url).to_string()),
+            muted_kv("prefix", empty_label(&self.s3.prefix).to_string()),
+            muted_kv(
+                "access env",
+                empty_label(&self.s3.access_key_env).to_string(),
+            ),
+            muted_kv(
+                "secret env",
+                empty_label(&self.s3.secret_key_env).to_string(),
+            ),
+            Line::from(action_spans(&[("e", "edit"), ("t", "test connection")])),
+            Line::from(""),
+            section_heading("Admin web"),
+            muted_kv("state", admin_state.to_string()),
+            muted_kv("target", admin_target),
+            muted_kv("VPS IP", self.admin_web.public_ip_label()),
+            Line::from(action_spans(&[
+                ("w", "toggle"),
+                ("d", "domain"),
+                ("p", "password"),
+            ])),
+            Line::from(Span::styled(
+                "Use this IP at your domain provider.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]);
         frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), area);
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let keys = if self.mode == Mode::CreateServer {
-            "tab move  left/right adjust  enter review/install/open mods  esc cancel"
+            "tab move  enter select/review/install  arrows move cursor/select  esc cancel"
         } else if self.mode == Mode::ConnectServer {
-            "tab move  left/right game  enter review/connect  esc cancel"
+            "tab move  enter select/review/connect  arrows move cursor/select  esc cancel"
+        } else if self.mode == Mode::ServerDetail {
+            "s start  x stop  R restart  b backup  L logs  m command  f config  esc server list"
         } else if self.mode == Mode::EditS3 {
-            "tab move  enter save  esc cancel"
+            "tab move  arrows move cursor  enter save  esc cancel"
         } else if self.mode == Mode::EditAdminWeb {
-            "type domain  enter save  esc cancel"
+            "type domain  arrows move cursor  enter save  esc cancel"
+        } else if self.mode == Mode::EditAdminPassword {
+            "tab move  type password  arrows move cursor  enter save  esc cancel"
         } else if self.mode == Mode::ConsoleCommand {
-            "type command  enter send  esc cancel"
+            "type command  arrows move cursor  enter send  esc cancel"
         } else if self.mode == Mode::PickModrinth {
-            "type search  tab kind  enter search/select  esc back"
+            "type search  tab kind  up/down result  enter search/select  esc back"
+        } else if self.mode == Mode::PickChoice {
+            "type filter  up/down choose  enter use  esc back"
         } else if self.mode == Mode::EditConfig {
             "type raw config  f2 save  tab file  esc close"
         } else if self.mode == Mode::ViewLogs {
             "R refresh logs  esc close"
         } else if self.active_screen == Screen::Server {
-            "tab/2 settings  up/down select  n new  c connect  s start  x stop  R restart  L logs  q quit"
+            "tab/2 settings  up/down select  enter details  n new  c connect  r refresh  q quit"
         } else {
-            "tab/1 server  e edit S3  t test S3  w admin web  d domain  q quit"
+            "tab/1 server  e edit S3  t test S3  w admin web  d domain  p password  q quit"
         };
         let footer = Paragraph::new(format!("{keys}  | {}", self.status))
             .style(Style::default().fg(Color::DarkGray));
@@ -1262,34 +1868,26 @@ impl App {
             }
             KeyCode::Tab | KeyCode::Down => self.create.next_field(),
             KeyCode::BackTab | KeyCode::Up => self.create.previous_field(),
-            KeyCode::Left | KeyCode::Right => self.create.adjust_choice(),
+            KeyCode::Left => self.create.move_cursor_left(),
+            KeyCode::Right => self.create.move_cursor_right(),
+            KeyCode::Home => self.create.move_cursor_start(),
+            KeyCode::End => self.create.move_cursor_end(),
             KeyCode::Char(' ') => {
                 if self.create.field == CreateField::License {
                     self.create.toggle_license();
-                } else if let Some(input) = self.create.input_mut() {
-                    input.push(' ');
-                    self.create.dry_run_reviewed = false;
-                }
-            }
-            KeyCode::Backspace => {
-                if let Some(input) = self.create.input_mut() {
-                    input.pop();
-                    self.create.dry_run_reviewed = false;
-                }
-            }
-            KeyCode::Enter => {
-                if self.create.field == CreateField::Modrinth {
-                    self.open_modrinth_picker();
                 } else {
-                    self.submit_create_server();
+                    self.create.insert_char(' ');
                 }
             }
-            KeyCode::Char(ch) => {
-                if let Some(input) = self.create.input_mut() {
-                    input.push(ch);
-                    self.create.dry_run_reviewed = false;
-                }
-            }
+            KeyCode::Backspace => self.create.backspace(),
+            KeyCode::Delete => self.create.delete_char(),
+            KeyCode::Enter => match self.create.field {
+                CreateField::Game => self.open_choice_picker(ChoiceTarget::CreateGame),
+                CreateField::Type => self.open_choice_picker(ChoiceTarget::CreateType),
+                CreateField::Modrinth => self.open_modrinth_picker(),
+                _ => self.submit_create_server(),
+            },
+            KeyCode::Char(ch) => self.create.insert_char(ch),
             _ => {}
         }
     }
@@ -1306,10 +1904,12 @@ impl App {
             }
             KeyCode::Down => self.modrinth_picker.next_result(),
             KeyCode::Up => self.modrinth_picker.previous_result(),
-            KeyCode::Backspace => {
-                self.modrinth_picker.query.pop();
-                self.modrinth_picker.mark_dirty();
-            }
+            KeyCode::Left => self.modrinth_picker.move_cursor_left(),
+            KeyCode::Right => self.modrinth_picker.move_cursor_right(),
+            KeyCode::Home => self.modrinth_picker.move_cursor_start(),
+            KeyCode::End => self.modrinth_picker.move_cursor_end(),
+            KeyCode::Backspace => self.modrinth_picker.backspace(),
+            KeyCode::Delete => self.modrinth_picker.delete_char(),
             KeyCode::Enter => {
                 if self.modrinth_picker.dirty || self.modrinth_picker.results.is_empty() {
                     self.search_modrinth();
@@ -1317,9 +1917,46 @@ impl App {
                     self.select_modrinth_result();
                 }
             }
+            KeyCode::Char(ch) => self.modrinth_picker.insert_char(ch),
+            _ => {}
+        }
+    }
+
+    fn handle_choice_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc => self.close_choice_picker(false),
+            KeyCode::Down => self.next_choice(),
+            KeyCode::Up => self.previous_choice(),
+            KeyCode::Left => {
+                move_cursor_left(&self.choice_picker.query, &mut self.choice_picker.cursor);
+            }
+            KeyCode::Right => {
+                move_cursor_right(&self.choice_picker.query, &mut self.choice_picker.cursor);
+            }
+            KeyCode::Home => self.choice_picker.cursor = 0,
+            KeyCode::End => self.choice_picker.cursor = self.choice_picker.query.chars().count(),
+            KeyCode::Backspace => {
+                backspace_at(
+                    &mut self.choice_picker.query,
+                    &mut self.choice_picker.cursor,
+                );
+                self.clamp_choice_selection();
+            }
+            KeyCode::Delete => {
+                delete_at(
+                    &mut self.choice_picker.query,
+                    &mut self.choice_picker.cursor,
+                );
+                self.clamp_choice_selection();
+            }
+            KeyCode::Enter => self.apply_choice(),
             KeyCode::Char(ch) => {
-                self.modrinth_picker.query.push(ch);
-                self.modrinth_picker.mark_dirty();
+                insert_at(
+                    &mut self.choice_picker.query,
+                    &mut self.choice_picker.cursor,
+                    ch,
+                );
+                self.clamp_choice_selection();
             }
             _ => {}
         }
@@ -1333,20 +1970,20 @@ impl App {
             }
             KeyCode::Tab | KeyCode::Down => self.connect.next_field(),
             KeyCode::BackTab | KeyCode::Up => self.connect.previous_field(),
-            KeyCode::Left | KeyCode::Right => self.connect.cycle_game(),
-            KeyCode::Backspace => {
-                if let Some(input) = self.connect.input_mut() {
-                    input.pop();
-                    self.connect.dry_run_reviewed = false;
+            KeyCode::Left => self.connect.move_cursor_left(),
+            KeyCode::Right => self.connect.move_cursor_right(),
+            KeyCode::Home => self.connect.move_cursor_start(),
+            KeyCode::End => self.connect.move_cursor_end(),
+            KeyCode::Backspace => self.connect.backspace(),
+            KeyCode::Delete => self.connect.delete_char(),
+            KeyCode::Enter => {
+                if self.connect.field == ConnectField::Game {
+                    self.open_choice_picker(ChoiceTarget::ConnectGame);
+                } else {
+                    self.submit_connect_server();
                 }
             }
-            KeyCode::Enter => self.submit_connect_server(),
-            KeyCode::Char(ch) => {
-                if let Some(input) = self.connect.input_mut() {
-                    input.push(ch);
-                    self.connect.dry_run_reviewed = false;
-                }
-            }
+            KeyCode::Char(ch) => self.connect.insert_char(ch),
             _ => {}
         }
     }
@@ -1393,13 +2030,14 @@ impl App {
             }
             KeyCode::Tab | KeyCode::Down => self.s3.next_field(),
             KeyCode::BackTab | KeyCode::Up => self.s3.previous_field(),
-            KeyCode::Backspace => {
-                self.s3.input_mut().pop();
-            }
+            KeyCode::Left => self.s3.move_cursor_left(),
+            KeyCode::Right => self.s3.move_cursor_right(),
+            KeyCode::Home => self.s3.move_cursor_start(),
+            KeyCode::End => self.s3.move_cursor_end(),
+            KeyCode::Backspace => self.s3.backspace(),
+            KeyCode::Delete => self.s3.delete_char(),
             KeyCode::Enter => self.save_s3_settings(),
-            KeyCode::Char(ch) => {
-                self.s3.input_mut().push(ch);
-            }
+            KeyCode::Char(ch) => self.s3.insert_char(ch),
             _ => {}
         }
     }
@@ -1410,13 +2048,42 @@ impl App {
                 self.mode = Mode::Normal;
                 self.status = "Admin web edit cancelled".to_string();
             }
+            KeyCode::Left => move_cursor_left(&self.admin_web.domain, &mut self.admin_web.cursor),
+            KeyCode::Right => {
+                move_cursor_right(&self.admin_web.domain, &mut self.admin_web.cursor);
+            }
+            KeyCode::Home => self.admin_web.cursor = 0,
+            KeyCode::End => self.admin_web.cursor = self.admin_web.domain.chars().count(),
             KeyCode::Backspace => {
-                self.admin_web.domain.pop();
+                backspace_at(&mut self.admin_web.domain, &mut self.admin_web.cursor);
+            }
+            KeyCode::Delete => {
+                delete_at(&mut self.admin_web.domain, &mut self.admin_web.cursor);
             }
             KeyCode::Enter => self.save_admin_web_settings(),
             KeyCode::Char(ch) => {
-                self.admin_web.domain.push(ch);
+                insert_at(&mut self.admin_web.domain, &mut self.admin_web.cursor, ch);
             }
+            _ => {}
+        }
+    }
+
+    fn handle_admin_password_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = "Admin password edit cancelled".to_string();
+            }
+            KeyCode::Tab | KeyCode::Down => self.admin_password.next_field(),
+            KeyCode::BackTab | KeyCode::Up => self.admin_password.previous_field(),
+            KeyCode::Left => self.admin_password.move_cursor_left(),
+            KeyCode::Right => self.admin_password.move_cursor_right(),
+            KeyCode::Home => self.admin_password.move_cursor_start(),
+            KeyCode::End => self.admin_password.move_cursor_end(),
+            KeyCode::Backspace => self.admin_password.backspace(),
+            KeyCode::Delete => self.admin_password.delete_char(),
+            KeyCode::Enter => self.save_admin_password(),
+            KeyCode::Char(ch) => self.admin_password.insert_char(ch),
             _ => {}
         }
     }
@@ -1463,7 +2130,14 @@ impl App {
                 );
             }
             Err(error) => {
-                self.status = format!("Modrinth search failed: {error}");
+                self.status = if error.is_connect() {
+                    format!(
+                        "Modrinth search needs hostabled at {} (connection failed)",
+                        self.daemon_url.trim_end_matches('/')
+                    )
+                } else {
+                    format!("Modrinth search failed: {error}")
+                };
             }
         }
     }
@@ -1526,16 +2200,17 @@ impl App {
     fn handle_console_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::Normal;
+                self.mode = Mode::ServerDetail;
                 self.status = "Console command cancelled".to_string();
             }
-            KeyCode::Backspace => {
-                self.console_command.pop();
-            }
+            KeyCode::Left => move_cursor_left(&self.console_command, &mut self.console_cursor),
+            KeyCode::Right => move_cursor_right(&self.console_command, &mut self.console_cursor),
+            KeyCode::Home => self.console_cursor = 0,
+            KeyCode::End => self.console_cursor = self.console_command.chars().count(),
+            KeyCode::Backspace => backspace_at(&mut self.console_command, &mut self.console_cursor),
+            KeyCode::Delete => delete_at(&mut self.console_command, &mut self.console_cursor),
             KeyCode::Enter => self.send_console_command(),
-            KeyCode::Char(ch) => {
-                self.console_command.push(ch);
-            }
+            KeyCode::Char(ch) => insert_at(&mut self.console_command, &mut self.console_cursor, ch),
             _ => {}
         }
     }
@@ -1543,7 +2218,7 @@ impl App {
     fn handle_logs_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::Normal;
+                self.mode = Mode::ServerDetail;
                 self.status = "Closed logs".to_string();
             }
             KeyCode::Char('R') | KeyCode::Char('r') => self.open_logs_panel(),
@@ -1574,7 +2249,7 @@ impl App {
         match http.send().and_then(|response| response.error_for_status()) {
             Ok(response) => {
                 let result = response.json::<ConsoleCommandResponse>();
-                self.mode = Mode::Normal;
+                self.mode = Mode::ServerDetail;
                 self.status = match result {
                     Ok(result) if result.message.trim().is_empty() => {
                         "Console command sent".to_string()
@@ -1592,7 +2267,7 @@ impl App {
     fn handle_config_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Esc => {
-                self.mode = Mode::Normal;
+                self.mode = Mode::ServerDetail;
                 self.status = "Closed config editor".to_string();
             }
             KeyCode::Tab => {
@@ -1726,6 +2401,38 @@ impl App {
         }
     }
 
+    fn save_admin_password(&mut self) {
+        let password = &self.admin_password.new_password;
+        if password.len() < 10 {
+            self.status = "Admin password must be at least 10 characters".to_string();
+            return;
+        }
+        if password != &self.admin_password.confirm_password {
+            self.status = "Admin password confirmation does not match".to_string();
+            return;
+        }
+
+        let request = AdminPasswordRequest {
+            new_password: password.clone(),
+        };
+        let url = format!(
+            "{}/api/admin/password",
+            self.daemon_url.trim_end_matches('/')
+        );
+        let http = self.with_operator_token(self.client.put(url).json(&request));
+
+        match http.send().and_then(|response| response.error_for_status()) {
+            Ok(_) => {
+                self.mode = Mode::Normal;
+                self.admin_password = AdminPasswordDraft::default();
+                self.status = "Admin web password updated".to_string();
+            }
+            Err(error) => {
+                self.status = format!("Failed to update admin web password: {error}");
+            }
+        }
+    }
+
     fn submit_create_server(&mut self) {
         if !self.create.accepted_license {
             self.status = "Accept the required game license before review".to_string();
@@ -1784,6 +2491,7 @@ impl Default for CreateDraft {
             game: hostable_core::GameKind::Minecraft,
             server_type: hostable_core::ServerType::Fabric,
             field: CreateField::Name,
+            cursor: "friends".chars().count(),
             name: "friends".to_string(),
             path: "/srv/hostable/servers/friends".to_string(),
             version: "1.20.4".to_string(),
@@ -1792,6 +2500,22 @@ impl Default for CreateDraft {
             modrinth: ModrinthDraft::default(),
             accepted_license: false,
             dry_run_reviewed: false,
+        }
+    }
+}
+
+impl CreateField {
+    fn index(self) -> usize {
+        match self {
+            CreateField::Game => 0,
+            CreateField::Type => 1,
+            CreateField::Name => 2,
+            CreateField::Path => 3,
+            CreateField::Version => 4,
+            CreateField::Memory => 5,
+            CreateField::Motd => 6,
+            CreateField::Modrinth => 7,
+            CreateField::License => 8,
         }
     }
 }
@@ -1809,6 +2533,7 @@ impl CreateDraft {
             CreateField::Modrinth => CreateField::License,
             CreateField::License => CreateField::Game,
         };
+        self.reset_cursor();
     }
 
     fn previous_field(&mut self) {
@@ -1823,15 +2548,16 @@ impl CreateDraft {
             CreateField::Modrinth => CreateField::Motd,
             CreateField::License => CreateField::Modrinth,
         };
+        self.reset_cursor();
     }
 
-    fn input_mut(&mut self) -> Option<&mut String> {
+    fn input(&self) -> Option<&String> {
         match self.field {
-            CreateField::Name => Some(&mut self.name),
-            CreateField::Path => Some(&mut self.path),
-            CreateField::Version => Some(&mut self.version),
-            CreateField::Memory => Some(&mut self.memory_mb),
-            CreateField::Motd => Some(&mut self.motd),
+            CreateField::Name => Some(&self.name),
+            CreateField::Path => Some(&self.path),
+            CreateField::Version => Some(&self.version),
+            CreateField::Memory => Some(&self.memory_mb),
+            CreateField::Motd => Some(&self.motd),
             CreateField::Game
             | CreateField::Type
             | CreateField::Modrinth
@@ -1839,14 +2565,61 @@ impl CreateDraft {
         }
     }
 
-    fn adjust_choice(&mut self) {
+    fn reset_cursor(&mut self) {
+        self.cursor = self.input().map(|value| value.chars().count()).unwrap_or(0);
+    }
+
+    fn insert_char(&mut self, ch: char) {
         match self.field {
-            CreateField::Game => self.cycle_game(),
-            CreateField::Type => self.cycle_type(),
-            CreateField::Modrinth => {}
-            CreateField::License => self.toggle_license(),
+            CreateField::Name => insert_at(&mut self.name, &mut self.cursor, ch),
+            CreateField::Path => insert_at(&mut self.path, &mut self.cursor, ch),
+            CreateField::Version => insert_at(&mut self.version, &mut self.cursor, ch),
+            CreateField::Memory => insert_at(&mut self.memory_mb, &mut self.cursor, ch),
+            CreateField::Motd => insert_at(&mut self.motd, &mut self.cursor, ch),
             _ => {}
         }
+        self.dry_run_reviewed = false;
+    }
+
+    fn backspace(&mut self) {
+        match self.field {
+            CreateField::Name => backspace_at(&mut self.name, &mut self.cursor),
+            CreateField::Path => backspace_at(&mut self.path, &mut self.cursor),
+            CreateField::Version => backspace_at(&mut self.version, &mut self.cursor),
+            CreateField::Memory => backspace_at(&mut self.memory_mb, &mut self.cursor),
+            CreateField::Motd => backspace_at(&mut self.motd, &mut self.cursor),
+            _ => {}
+        }
+        self.dry_run_reviewed = false;
+    }
+
+    fn delete_char(&mut self) {
+        match self.field {
+            CreateField::Name => delete_at(&mut self.name, &mut self.cursor),
+            CreateField::Path => delete_at(&mut self.path, &mut self.cursor),
+            CreateField::Version => delete_at(&mut self.version, &mut self.cursor),
+            CreateField::Memory => delete_at(&mut self.memory_mb, &mut self.cursor),
+            CreateField::Motd => delete_at(&mut self.motd, &mut self.cursor),
+            _ => {}
+        }
+        self.dry_run_reviewed = false;
+    }
+
+    fn move_cursor_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn move_cursor_right(&mut self) {
+        let len = self.input().map(|value| value.chars().count()).unwrap_or(0);
+        self.cursor = self.cursor.saturating_add(1).min(len);
+    }
+
+    fn move_cursor_start(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn move_cursor_end(&mut self) {
+        self.reset_cursor();
     }
 
     fn toggle_license(&mut self) {
@@ -1854,44 +2627,24 @@ impl CreateDraft {
         self.dry_run_reviewed = false;
     }
 
-    fn cycle_game(&mut self) {
-        self.game = match self.game {
+    fn set_game(&mut self, game: hostable_core::GameKind) {
+        self.game = match game {
             hostable_core::GameKind::Minecraft => {
+                self.server_type = hostable_core::ServerType::Fabric;
+                self.version = "1.20.4".to_string();
+                self.motd = "A Hostable Minecraft server".to_string();
+                hostable_core::GameKind::Minecraft
+            }
+            hostable_core::GameKind::ArkSurvivalEvolved => {
                 self.server_type = hostable_core::ServerType::ArkSurvivalEvolved;
                 self.version.clear();
                 self.motd = "A Hostable ARK server".to_string();
                 self.modrinth = ModrinthDraft::default();
                 hostable_core::GameKind::ArkSurvivalEvolved
             }
-            hostable_core::GameKind::ArkSurvivalEvolved => {
-                self.server_type = hostable_core::ServerType::Fabric;
-                self.version = "1.20.4".to_string();
-                self.motd = "A Hostable Minecraft server".to_string();
-                hostable_core::GameKind::Minecraft
-            }
         };
         self.dry_run_reviewed = false;
-    }
-
-    fn cycle_type(&mut self) {
-        if self.game == hostable_core::GameKind::ArkSurvivalEvolved {
-            self.server_type = hostable_core::ServerType::ArkSurvivalEvolved;
-            return;
-        }
-
-        self.server_type = match self.server_type {
-            hostable_core::ServerType::Vanilla => hostable_core::ServerType::Paper,
-            hostable_core::ServerType::Paper => hostable_core::ServerType::Fabric,
-            hostable_core::ServerType::Fabric | hostable_core::ServerType::ArkSurvivalEvolved => {
-                hostable_core::ServerType::Vanilla
-            }
-        };
-        self.dry_run_reviewed = false;
-    }
-
-    fn field_line(&self, field: CreateField, label: &str, value: &str) -> String {
-        let marker = if self.field == field { ">" } else { " " };
-        format!("{marker} {label}: {value}")
+        self.reset_cursor();
     }
 
     fn extra_json(&self) -> serde_json::Value {
@@ -1982,11 +2735,23 @@ fn push_install_file(
     }));
 }
 
+impl Default for ChoicePicker {
+    fn default() -> Self {
+        Self {
+            target: ChoiceTarget::CreateGame,
+            query: String::new(),
+            cursor: 0,
+            selected: 0,
+        }
+    }
+}
+
 impl Default for ModrinthPicker {
     fn default() -> Self {
         Self {
             kind: ModrinthPickKind::Modpack,
             query: String::new(),
+            cursor: 0,
             results: Vec::new(),
             selected: 0,
             dirty: true,
@@ -2025,6 +2790,37 @@ impl ModrinthPicker {
             self.selected - 1
         };
     }
+
+    fn insert_char(&mut self, ch: char) {
+        insert_at(&mut self.query, &mut self.cursor, ch);
+        self.mark_dirty();
+    }
+
+    fn backspace(&mut self) {
+        backspace_at(&mut self.query, &mut self.cursor);
+        self.mark_dirty();
+    }
+
+    fn delete_char(&mut self) {
+        delete_at(&mut self.query, &mut self.cursor);
+        self.mark_dirty();
+    }
+
+    fn move_cursor_left(&mut self) {
+        move_cursor_left(&self.query, &mut self.cursor);
+    }
+
+    fn move_cursor_right(&mut self) {
+        move_cursor_right(&self.query, &mut self.cursor);
+    }
+
+    fn move_cursor_start(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn move_cursor_end(&mut self) {
+        self.cursor = self.query.chars().count();
+    }
 }
 
 impl ModrinthPickKind {
@@ -2040,10 +2836,21 @@ impl Default for ConnectDraft {
     fn default() -> Self {
         Self {
             field: ConnectField::Game,
+            cursor: 0,
             game: hostable_core::GameKind::Minecraft,
             name: "friends".to_string(),
             path: "/srv/hostable/servers/friends".to_string(),
             dry_run_reviewed: false,
+        }
+    }
+}
+
+impl ConnectField {
+    fn index(self) -> usize {
+        match self {
+            ConnectField::Game => 0,
+            ConnectField::Name => 1,
+            ConnectField::Path => 2,
         }
     }
 }
@@ -2055,6 +2862,7 @@ impl ConnectDraft {
             ConnectField::Name => ConnectField::Path,
             ConnectField::Path => ConnectField::Game,
         };
+        self.reset_cursor();
     }
 
     fn previous_field(&mut self) {
@@ -2063,27 +2871,68 @@ impl ConnectDraft {
             ConnectField::Name => ConnectField::Game,
             ConnectField::Path => ConnectField::Name,
         };
+        self.reset_cursor();
     }
 
-    fn input_mut(&mut self) -> Option<&mut String> {
+    fn input(&self) -> Option<&String> {
         match self.field {
-            ConnectField::Name => Some(&mut self.name),
-            ConnectField::Path => Some(&mut self.path),
+            ConnectField::Name => Some(&self.name),
+            ConnectField::Path => Some(&self.path),
             ConnectField::Game => None,
         }
     }
 
-    fn cycle_game(&mut self) {
-        self.game = match self.game {
-            hostable_core::GameKind::Minecraft => hostable_core::GameKind::ArkSurvivalEvolved,
-            hostable_core::GameKind::ArkSurvivalEvolved => hostable_core::GameKind::Minecraft,
-        };
+    fn reset_cursor(&mut self) {
+        self.cursor = self.input().map(|value| value.chars().count()).unwrap_or(0);
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        match self.field {
+            ConnectField::Name => insert_at(&mut self.name, &mut self.cursor, ch),
+            ConnectField::Path => insert_at(&mut self.path, &mut self.cursor, ch),
+            ConnectField::Game => {}
+        }
         self.dry_run_reviewed = false;
     }
 
-    fn field_line(&self, field: ConnectField, label: &str, value: &str) -> String {
-        let marker = if self.field == field { ">" } else { " " };
-        format!("{marker} {label}: {value}")
+    fn backspace(&mut self) {
+        match self.field {
+            ConnectField::Name => backspace_at(&mut self.name, &mut self.cursor),
+            ConnectField::Path => backspace_at(&mut self.path, &mut self.cursor),
+            ConnectField::Game => {}
+        }
+        self.dry_run_reviewed = false;
+    }
+
+    fn delete_char(&mut self) {
+        match self.field {
+            ConnectField::Name => delete_at(&mut self.name, &mut self.cursor),
+            ConnectField::Path => delete_at(&mut self.path, &mut self.cursor),
+            ConnectField::Game => {}
+        }
+        self.dry_run_reviewed = false;
+    }
+
+    fn move_cursor_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn move_cursor_right(&mut self) {
+        let len = self.input().map(|value| value.chars().count()).unwrap_or(0);
+        self.cursor = self.cursor.saturating_add(1).min(len);
+    }
+
+    fn move_cursor_start(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn move_cursor_end(&mut self) {
+        self.reset_cursor();
+    }
+
+    fn set_game(&mut self, game: hostable_core::GameKind) {
+        self.game = game;
+        self.dry_run_reviewed = false;
     }
 }
 
@@ -2091,6 +2940,7 @@ impl Default for S3Draft {
     fn default() -> Self {
         Self {
             field: S3Field::LocalKeepLast,
+            cursor: "5".chars().count(),
             local_keep_last: "5".to_string(),
             s3_keep_last: "5".to_string(),
             bucket: String::new(),
@@ -2129,6 +2979,7 @@ impl S3Draft {
     fn from_config(config: hostable_core::S3Config) -> Self {
         Self {
             field: S3Field::LocalKeepLast,
+            cursor: "5".chars().count(),
             local_keep_last: "5".to_string(),
             s3_keep_last: "5".to_string(),
             bucket: config.bucket,
@@ -2163,17 +3014,17 @@ impl S3Draft {
             .local_keep_last
             .trim()
             .parse::<u32>()
-            .map_err(|_| "Keep local must be a number".to_string())?;
+            .map_err(|_| "Local backups to keep must be a number".to_string())?;
         if !(1..=100).contains(&local_keep_last) {
-            return Err("Keep local must be between 1 and 100".to_string());
+            return Err("Local backups to keep must be between 1 and 100".to_string());
         }
         let s3_keep_last = self
             .s3_keep_last
             .trim()
             .parse::<u32>()
-            .map_err(|_| "Keep S3 must be a number".to_string())?;
+            .map_err(|_| "S3 backups to keep must be a number".to_string())?;
         if !(1..=100).contains(&s3_keep_last) {
-            return Err("Keep S3 must be between 1 and 100".to_string());
+            return Err("S3 backups to keep must be between 1 and 100".to_string());
         }
         Ok(BackupSettingsRequest {
             local_keep_last,
@@ -2192,6 +3043,7 @@ impl S3Draft {
             S3Field::AccessKeyEnv => S3Field::SecretKeyEnv,
             S3Field::SecretKeyEnv => S3Field::LocalKeepLast,
         };
+        self.reset_cursor();
     }
 
     fn previous_field(&mut self) {
@@ -2205,24 +3057,95 @@ impl S3Draft {
             S3Field::AccessKeyEnv => S3Field::Prefix,
             S3Field::SecretKeyEnv => S3Field::AccessKeyEnv,
         };
+        self.reset_cursor();
     }
 
-    fn input_mut(&mut self) -> &mut String {
+    fn input(&self) -> &String {
         match self.field {
-            S3Field::LocalKeepLast => &mut self.local_keep_last,
-            S3Field::S3KeepLast => &mut self.s3_keep_last,
-            S3Field::Bucket => &mut self.bucket,
-            S3Field::Region => &mut self.region,
-            S3Field::Endpoint => &mut self.endpoint_url,
-            S3Field::Prefix => &mut self.prefix,
-            S3Field::AccessKeyEnv => &mut self.access_key_env,
-            S3Field::SecretKeyEnv => &mut self.secret_key_env,
+            S3Field::LocalKeepLast => &self.local_keep_last,
+            S3Field::S3KeepLast => &self.s3_keep_last,
+            S3Field::Bucket => &self.bucket,
+            S3Field::Region => &self.region,
+            S3Field::Endpoint => &self.endpoint_url,
+            S3Field::Prefix => &self.prefix,
+            S3Field::AccessKeyEnv => &self.access_key_env,
+            S3Field::SecretKeyEnv => &self.secret_key_env,
         }
     }
 
-    fn field_line(&self, field: S3Field, label: &str, value: &str) -> String {
-        let marker = if self.field == field { ">" } else { " " };
-        format!("{marker} {label}: {value}")
+    fn reset_cursor(&mut self) {
+        self.cursor = self.input().chars().count();
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        match self.field {
+            S3Field::LocalKeepLast => insert_at(&mut self.local_keep_last, &mut self.cursor, ch),
+            S3Field::S3KeepLast => insert_at(&mut self.s3_keep_last, &mut self.cursor, ch),
+            S3Field::Bucket => insert_at(&mut self.bucket, &mut self.cursor, ch),
+            S3Field::Region => insert_at(&mut self.region, &mut self.cursor, ch),
+            S3Field::Endpoint => insert_at(&mut self.endpoint_url, &mut self.cursor, ch),
+            S3Field::Prefix => insert_at(&mut self.prefix, &mut self.cursor, ch),
+            S3Field::AccessKeyEnv => insert_at(&mut self.access_key_env, &mut self.cursor, ch),
+            S3Field::SecretKeyEnv => insert_at(&mut self.secret_key_env, &mut self.cursor, ch),
+        }
+    }
+
+    fn backspace(&mut self) {
+        match self.field {
+            S3Field::LocalKeepLast => backspace_at(&mut self.local_keep_last, &mut self.cursor),
+            S3Field::S3KeepLast => backspace_at(&mut self.s3_keep_last, &mut self.cursor),
+            S3Field::Bucket => backspace_at(&mut self.bucket, &mut self.cursor),
+            S3Field::Region => backspace_at(&mut self.region, &mut self.cursor),
+            S3Field::Endpoint => backspace_at(&mut self.endpoint_url, &mut self.cursor),
+            S3Field::Prefix => backspace_at(&mut self.prefix, &mut self.cursor),
+            S3Field::AccessKeyEnv => backspace_at(&mut self.access_key_env, &mut self.cursor),
+            S3Field::SecretKeyEnv => backspace_at(&mut self.secret_key_env, &mut self.cursor),
+        }
+    }
+
+    fn delete_char(&mut self) {
+        match self.field {
+            S3Field::LocalKeepLast => delete_at(&mut self.local_keep_last, &mut self.cursor),
+            S3Field::S3KeepLast => delete_at(&mut self.s3_keep_last, &mut self.cursor),
+            S3Field::Bucket => delete_at(&mut self.bucket, &mut self.cursor),
+            S3Field::Region => delete_at(&mut self.region, &mut self.cursor),
+            S3Field::Endpoint => delete_at(&mut self.endpoint_url, &mut self.cursor),
+            S3Field::Prefix => delete_at(&mut self.prefix, &mut self.cursor),
+            S3Field::AccessKeyEnv => delete_at(&mut self.access_key_env, &mut self.cursor),
+            S3Field::SecretKeyEnv => delete_at(&mut self.secret_key_env, &mut self.cursor),
+        }
+    }
+
+    fn move_cursor_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn move_cursor_right(&mut self) {
+        let len = self.input().chars().count();
+        self.cursor = self.cursor.saturating_add(1).min(len);
+    }
+
+    fn move_cursor_start(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn move_cursor_end(&mut self) {
+        self.reset_cursor();
+    }
+}
+
+impl S3Field {
+    fn index(self) -> usize {
+        match self {
+            S3Field::LocalKeepLast => 0,
+            S3Field::S3KeepLast => 1,
+            S3Field::Bucket => 2,
+            S3Field::Region => 3,
+            S3Field::Endpoint => 4,
+            S3Field::Prefix => 5,
+            S3Field::AccessKeyEnv => 6,
+            S3Field::SecretKeyEnv => 7,
+        }
     }
 }
 
@@ -2239,6 +3162,90 @@ impl AdminWebDraft {
         } else {
             "http://<vps-ip>:8080".to_string()
         }
+    }
+}
+
+impl Default for AdminPasswordDraft {
+    fn default() -> Self {
+        Self {
+            field: AdminPasswordField::NewPassword,
+            cursor: 0,
+            new_password: String::new(),
+            confirm_password: String::new(),
+        }
+    }
+}
+
+impl AdminPasswordDraft {
+    fn next_field(&mut self) {
+        self.field = match self.field {
+            AdminPasswordField::NewPassword => AdminPasswordField::ConfirmPassword,
+            AdminPasswordField::ConfirmPassword => AdminPasswordField::NewPassword,
+        };
+        self.reset_cursor();
+    }
+
+    fn previous_field(&mut self) {
+        self.next_field();
+    }
+
+    fn input(&self) -> &String {
+        match self.field {
+            AdminPasswordField::NewPassword => &self.new_password,
+            AdminPasswordField::ConfirmPassword => &self.confirm_password,
+        }
+    }
+
+    fn reset_cursor(&mut self) {
+        self.cursor = self.input().chars().count();
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        match self.field {
+            AdminPasswordField::NewPassword => {
+                insert_at(&mut self.new_password, &mut self.cursor, ch)
+            }
+            AdminPasswordField::ConfirmPassword => {
+                insert_at(&mut self.confirm_password, &mut self.cursor, ch)
+            }
+        }
+    }
+
+    fn backspace(&mut self) {
+        match self.field {
+            AdminPasswordField::NewPassword => {
+                backspace_at(&mut self.new_password, &mut self.cursor)
+            }
+            AdminPasswordField::ConfirmPassword => {
+                backspace_at(&mut self.confirm_password, &mut self.cursor)
+            }
+        }
+    }
+
+    fn delete_char(&mut self) {
+        match self.field {
+            AdminPasswordField::NewPassword => delete_at(&mut self.new_password, &mut self.cursor),
+            AdminPasswordField::ConfirmPassword => {
+                delete_at(&mut self.confirm_password, &mut self.cursor)
+            }
+        }
+    }
+
+    fn move_cursor_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn move_cursor_right(&mut self) {
+        let len = self.input().chars().count();
+        self.cursor = self.cursor.saturating_add(1).min(len);
+    }
+
+    fn move_cursor_start(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn move_cursor_end(&mut self) {
+        self.reset_cursor();
     }
 }
 
@@ -2281,6 +3288,11 @@ struct AdminWebSettingsResponse {
 struct AdminWebSettingsRequest {
     enabled: bool,
     domain: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminPasswordRequest {
+    new_password: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2330,30 +3342,221 @@ struct ConsoleCommandResponse {
     message: String,
 }
 
-fn nav_line(label: &'static str, active: bool) -> Line<'static> {
+fn tab_span(label: &'static str, active: bool) -> Span<'static> {
     if active {
-        Line::from(vec![
-            Span::styled(
-                ">",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled(
-                label,
+        Span::styled(
+            label,
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(label, Style::default().fg(Color::DarkGray))
+    }
+}
+
+fn block(title: &'static str, active: bool) -> Block<'static> {
+    let border_style = if active {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(border_style)
+}
+
+struct FormViewport {
+    header: Rect,
+    rows: Vec<(usize, Rect)>,
+    start: usize,
+    end: usize,
+    total: usize,
+}
+
+impl FormViewport {
+    fn range_label(&self) -> String {
+        if self.total == 0 || self.rows.is_empty() {
+            "fields 0/0".to_string()
+        } else {
+            format!("fields {}-{} of {}", self.start + 1, self.end, self.total)
+        }
+    }
+}
+
+fn form_viewport(area: Rect, total_fields: usize, active_index: usize) -> FormViewport {
+    let regions = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+    let header = regions[0];
+    let body = regions[1];
+    if total_fields == 0 || body.height == 0 {
+        return FormViewport {
+            header,
+            rows: Vec::new(),
+            start: 0,
+            end: 0,
+            total: total_fields,
+        };
+    }
+
+    let visible_count = if body.height < 3 {
+        1
+    } else {
+        usize::from(body.height / 3)
+    }
+    .min(total_fields);
+    let active_index = active_index.min(total_fields.saturating_sub(1));
+    let start = active_index
+        .saturating_sub(visible_count.saturating_sub(1))
+        .min(total_fields.saturating_sub(visible_count));
+    let end = start + visible_count;
+    let body_bottom = body.y.saturating_add(body.height);
+    let mut rows = Vec::with_capacity(visible_count);
+
+    for field_index in start..end {
+        let visible_index = field_index - start;
+        let y = body
+            .y
+            .saturating_add((visible_index as u16).saturating_mul(3));
+        let height = body_bottom.saturating_sub(y).min(3);
+        if height == 0 {
+            break;
+        }
+        rows.push((
+            field_index,
+            Rect {
+                x: body.x,
+                y,
+                width: body.width,
+                height,
+            },
+        ));
+    }
+
+    FormViewport {
+        header,
+        rows,
+        start,
+        end,
+        total: total_fields,
+    }
+}
+
+fn render_input_field(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    label: &'static str,
+    value: &str,
+    active: bool,
+    cursor: usize,
+) {
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let (visible, cursor_col) = visible_input(value, cursor, inner_width);
+    let field = Paragraph::new(visible)
+        .style(if active {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        })
+        .block(block(label, active));
+    frame.render_widget(field, area);
+
+    if active && area.width > 2 && area.height > 1 {
+        frame.set_cursor_position(Position::new(area.x + 1 + cursor_col as u16, area.y + 1));
+    }
+}
+
+fn render_secret_input_field(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    label: &'static str,
+    value: &str,
+    active: bool,
+    cursor: usize,
+) {
+    let masked = "*".repeat(value.chars().count());
+    render_input_field(frame, area, label, &masked, active, cursor);
+}
+
+fn render_select_field(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    label: &'static str,
+    value: &str,
+    active: bool,
+    hint: &'static str,
+) {
+    let line = Line::from(vec![
+        Span::styled(
+            value.to_string(),
+            if active {
                 Style::default()
                     .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(" ", Style::default().fg(Color::DarkGray)),
-            Span::raw(" "),
-            Span::styled(label, Style::default().fg(Color::DarkGray)),
-        ])
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            },
+        ),
+        Span::styled(format!("  {hint}"), Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(line).block(block(label, active)), area);
+}
+
+fn visible_input(value: &str, cursor: usize, width: usize) -> (String, usize) {
+    if width == 0 {
+        return (String::new(), 0);
     }
+    let char_count = value.chars().count();
+    let cursor = cursor.min(char_count);
+    let start = cursor.saturating_sub(width.saturating_sub(1));
+    let visible = value.chars().skip(start).take(width).collect::<String>();
+    (visible, cursor.saturating_sub(start).min(width - 1))
+}
+
+fn insert_at(value: &mut String, cursor: &mut usize, ch: char) {
+    let byte_index = byte_index(value, *cursor);
+    value.insert(byte_index, ch);
+    *cursor += 1;
+}
+
+fn backspace_at(value: &mut String, cursor: &mut usize) {
+    if *cursor == 0 {
+        return;
+    }
+    let remove_at = (*cursor).saturating_sub(1);
+    let start = byte_index(value, remove_at);
+    let end = byte_index(value, *cursor);
+    value.replace_range(start..end, "");
+    *cursor = remove_at;
+}
+
+fn delete_at(value: &mut String, cursor: &mut usize) {
+    let char_count = value.chars().count();
+    if *cursor >= char_count {
+        return;
+    }
+    let start = byte_index(value, *cursor);
+    let end = byte_index(value, *cursor + 1);
+    value.replace_range(start..end, "");
+}
+
+fn move_cursor_left(value: &str, cursor: &mut usize) {
+    *cursor = (*cursor).saturating_sub(1).min(value.chars().count());
+}
+
+fn move_cursor_right(value: &str, cursor: &mut usize) {
+    *cursor = (*cursor).saturating_add(1).min(value.chars().count());
+}
+
+fn byte_index(value: &str, cursor: usize) -> usize {
+    value
+        .char_indices()
+        .map(|(index, _)| index)
+        .nth(cursor)
+        .unwrap_or(value.len())
 }
 
 fn push_hint(spans: &mut Vec<Span<'static>>, key: &'static str, label: &'static str) {
@@ -2376,20 +3579,6 @@ fn action_spans(actions: &[(&'static str, &'static str)]) -> Vec<Span<'static>> 
         push_hint(&mut spans, key, label);
     }
     spans
-}
-
-fn task_action_spans(mode: Mode) -> Vec<Span<'static>> {
-    match mode {
-        Mode::Normal => action_spans(&[("up/down", "select")]),
-        Mode::CreateServer => action_spans(&[("tab", "field"), ("enter", "review/install")]),
-        Mode::ConnectServer => action_spans(&[("tab", "field"), ("enter", "review/connect")]),
-        Mode::EditS3 => action_spans(&[("tab", "field"), ("enter", "save")]),
-        Mode::EditAdminWeb => action_spans(&[("enter", "save")]),
-        Mode::ConsoleCommand => action_spans(&[("enter", "send")]),
-        Mode::PickModrinth => action_spans(&[("tab", "kind"), ("enter", "search/select")]),
-        Mode::EditConfig => action_spans(&[("tab", "file"), ("F2", "save")]),
-        Mode::ViewLogs => action_spans(&[("R", "refresh")]),
-    }
 }
 
 fn section_heading(label: &'static str) -> Line<'static> {
@@ -2440,12 +3629,14 @@ fn status_style(status: &str) -> Style {
 
 fn server_context_label(mode: Mode) -> &'static str {
     match mode {
-        Mode::Normal => "manage selected server",
+        Mode::Normal => "server list",
+        Mode::ServerDetail => "server details",
         Mode::CreateServer => "creating server",
         Mode::ConnectServer => "connecting folder",
-        Mode::EditS3 | Mode::EditAdminWeb => "editing settings",
+        Mode::EditS3 | Mode::EditAdminWeb | Mode::EditAdminPassword => "editing settings",
         Mode::ConsoleCommand => "sending command",
         Mode::PickModrinth => "choosing Modrinth content",
+        Mode::PickChoice => "choosing from list",
         Mode::EditConfig => "editing config",
         Mode::ViewLogs => "viewing logs",
     }

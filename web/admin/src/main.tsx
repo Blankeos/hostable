@@ -67,13 +67,29 @@ async function submitPassword(path: "/api/admin/login" | "/api/admin/setup", pas
   }
 }
 
+async function changePassword(currentPassword: string, newPassword: string) {
+  const response = await fetch("/api/admin/password", {
+    method: "PUT",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: "request failed" }));
+    throw new Error(body.error ?? "request failed");
+  }
+}
+
 async function logout() {
   await fetch("/api/admin/logout", { method: "POST", credentials: "include" });
 }
 
 function App() {
   const [password, setPassword] = createSignal("");
+  const [currentPassword, setCurrentPassword] = createSignal("");
+  const [newPassword, setNewPassword] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
+  const [passwordMessage, setPasswordMessage] = createSignal<string | null>(null);
   const [lastChecked, setLastChecked] = createSignal<string | null>(null);
   const [me, { refetch: refetchMe }] = createResource(fetchMe);
   const [servers, { refetch }] = createResource(
@@ -128,6 +144,18 @@ function App() {
     }
   };
 
+  const updatePassword = async () => {
+    setPasswordMessage(null);
+    try {
+      await changePassword(currentPassword(), newPassword());
+      setCurrentPassword("");
+      setNewPassword("");
+      setPasswordMessage("Password updated");
+    } catch (caught) {
+      setPasswordMessage(caught instanceof Error ? caught.message : "Password update failed");
+    }
+  };
+
   return (
     <main class="shell">
       <section class="panel auth-panel">
@@ -163,24 +191,52 @@ function App() {
             </form>
           }
         >
-          <div class="toolbar">
-            <Show when={lastChecked()}>
-              <p class="refresh-meta">Updated {lastChecked()}</p>
-            </Show>
-            <div class="toolbar-actions">
-              <button class="quiet-button" onClick={() => refetch()}>
-                Refresh
-              </button>
-              <button
-                class="quiet-button"
-                onClick={async () => {
-                  await logout();
-                  await refetchMe();
-                }}
-              >
-                Lock
-              </button>
+          <div class="authed-stack">
+            <div class="toolbar">
+              <Show when={lastChecked()}>
+                <p class="refresh-meta">Updated {lastChecked()}</p>
+              </Show>
+              <div class="toolbar-actions">
+                <button class="quiet-button" onClick={() => refetch()}>
+                  Refresh
+                </button>
+                <button
+                  class="quiet-button"
+                  onClick={async () => {
+                    await logout();
+                    await refetchMe();
+                  }}
+                >
+                  Lock
+                </button>
+              </div>
             </div>
+            <form
+              class="password-edit"
+              onSubmit={(event) => {
+                event.preventDefault();
+                updatePassword();
+              }}
+            >
+              <input
+                type="password"
+                placeholder="Current password"
+                value={currentPassword()}
+                onInput={(event) => setCurrentPassword(event.currentTarget.value)}
+              />
+              <input
+                type="password"
+                placeholder="New password"
+                value={newPassword()}
+                onInput={(event) => setNewPassword(event.currentTarget.value)}
+              />
+              <button class="quiet-button" type="submit">
+                Change Password
+              </button>
+              <Show when={passwordMessage()}>
+                <p class="refresh-meta">{passwordMessage()}</p>
+              </Show>
+            </form>
           </div>
         </Show>
       </section>

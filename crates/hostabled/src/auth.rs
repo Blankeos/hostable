@@ -84,6 +84,13 @@ impl AuthStore {
             .remove(token);
     }
 
+    pub fn clear_sessions(&self) {
+        self.sessions
+            .lock()
+            .expect("auth session mutex poisoned")
+            .clear();
+    }
+
     pub fn valid_session(&self, token: &str) -> bool {
         self.sessions
             .lock()
@@ -98,6 +105,12 @@ impl AuthStore {
             || operator_token_from_headers(headers)
                 .map(|token| self.valid_operator_token(&token))
                 .unwrap_or(false)
+    }
+
+    pub fn operator_authenticated_headers(&self, headers: &HeaderMap) -> bool {
+        operator_token_from_headers(headers)
+            .map(|token| self.valid_operator_token(&token))
+            .unwrap_or(false)
     }
 
     fn valid_operator_token(&self, token: &str) -> bool {
