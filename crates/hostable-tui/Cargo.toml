@@ -1,9 +1,13 @@
 [package]
 name = "hostable"
 version.workspace = true
+description = "Terminal UI and CLI to set up and run game servers on a VPS"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true

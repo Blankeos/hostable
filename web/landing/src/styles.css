@@ -1,344 +1,328 @@
-/* Reset */
+/* Spacing scale: 4 8 12 16 24 32 48 64. Everything below uses these. */
+:root {
+  color-scheme: light dark;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --radius: 6px;
+
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --border: #e6e7ea;
+  --border-strong: #d2d4d9;
+  --text: #17181a;
+  --muted: #6a6e76;
+  --code-bg: #f1f2f4;
+  --primary: #17181a;
+  --primary-text: #fafafa;
+  --accent: #c4481a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1012;
+    --surface: #151618;
+    --border: #25272b;
+    --border-strong: #34373c;
+    --text: #e8e9eb;
+    --muted: #8d9199;
+    --code-bg: #151618;
+    --accent: #e0663a;
+    --primary: #e8e9eb;
+    --primary-text: #0f1012;
+  }
+}
+
 *,
 *::before,
 *::after {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 
-:root {
-  /* Warm earthy palette */
-  --ink: #1f2119;
-  --ink-soft: #3d4135;
-  --paper: #faf8f3;
-  --paper-warm: #f5f2ea;
-  --muted: #6b7064;
-  --line: #e5e0d4;
-  --line-strong: #d4cdbf;
-
-  /* Accents */
-  --green: #5a8a63;
-  --green-soft: #e8f0ea;
-  --red: #c96b52;
-
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(31, 33, 25, 0.08);
-  --shadow-md: 0 4px 12px rgba(31, 33, 25, 0.1);
-  --shadow-lg: 0 8px 24px rgba(31, 33, 25, 0.12);
-}
-
-html {
-  font-size: 16px;
-  scroll-behavior: smooth;
-}
-
 body {
-  font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  color: var(--ink);
-  background: var(--paper);
-  line-height: 1.6;
+  margin: 0;
+  color: var(--text);
+  background: var(--bg);
+  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-main {
-  max-width: 1280px;
+h1,
+h2,
+h3,
+p,
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 0.875em;
+}
+
+.wrap {
+  width: min(720px, 100% - var(--space-5) * 2);
   margin: 0 auto;
-  padding: 0 1.5rem;
-  overflow-x: hidden; /* Prevent page-level horizontal scroll on mobile */
 }
 
-/* Typography */
+/* Nav */
+.nav {
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-weight: 600;
+}
+
+.mark {
+  display: block;
+  flex: none;
+}
+
+.nav nav {
+  display: flex;
+  gap: var(--space-5);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Hero */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  padding: var(--space-8) 0 var(--space-7);
+}
+
 h1 {
-  font-size: clamp(2.5rem, 6vw, 4.5rem);
-  font-weight: 700;
-  line-height: 1.1;
+  font-size: clamp(32px, 6vw, 44px);
+  font-weight: 650;
+  line-height: 1.15;
   letter-spacing: -0.02em;
-  color: var(--ink);
+}
+
+.lede {
+  max-width: 600px;
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.command {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+}
+
+.command code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+button {
+  flex: none;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: #fff;
+  background: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  opacity: 0.88;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.facts li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.facts svg {
+  width: 16px;
+  height: 16px;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Sections */
+.block {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-6) 0;
+  border-top: 1px solid var(--border);
 }
 
 h2 {
-  font-size: 1.25rem;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.3;
-  color: var(--ink);
-}
-
-p {
-  color: var(--muted);
-  line-height: 1.7;
-}
-
-/* =========================================
-   Cycling Word Animation
-   ========================================= */
-.cycle-wrap {
-  display: inline-block;
-  position: relative;
-  overflow: hidden;
-  vertical-align: bottom;
-}
-
-.cycle-word {
-  display: inline-block;
-  transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.4s ease;
-}
-
-.cycle-in {
-  transform: translateY(0);
-  opacity: 1;
-}
-
-.cycle-out {
-  transform: translateY(-100%);
-  opacity: 0;
-}
-
-/* =========================================
-   Hero Section (Centered Layout)
-   ========================================= */
-.hero {
-  min-height: 60vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 2.5rem;
-  padding: 4rem 0 6rem;
-}
-
-.hero .copy {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.5rem;
-  max-width: 760px;
-}
-
-.hero .mark {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: var(--green);
-  color: white;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 1.125rem;
-  width: fit-content;
-  box-shadow: var(--shadow-sm);
-}
-
-.hero .lede {
-  font-size: 1.125rem;
-  max-width: 600px;
-}
-
-.hero .badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  justify-content: center;
-}
-
-.hero .badges span {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: white;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--ink-soft);
-  box-shadow: var(--shadow-sm);
-}
-
-.hero .badges svg {
-  width: 16px;
-  height: 16px;
-  color: var(--green);
-}
-
-.hero .install {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  width: 100%;
-  max-width: 560px; /* Constrains the code block on mobile */
-  align-items: center;
-}
-
-.hero .install p {
-  font-size: 0.875rem;
   color: var(--muted);
 }
 
-.hero .install code {
-  display: block;
-  width: 100%;
-  padding: 1rem 1.25rem;
-  background: var(--ink);
-  color: #d4e8d0;
-  border-radius: 12px;
-  font-family: "SF Mono", "Monaco", "Cascadia Code", "Liberation Mono", monospace;
-  font-size: 0.875rem;
-  box-shadow: var(--shadow-md);
-  text-align: left;
-  white-space: pre-wrap;       /* Allows wrapping instead of horizontal overflow */
-  overflow-wrap: break-word;   /* Breaks long words/URLs if needed */
-  word-break: break-word;
+h3 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
-/* Video placeholder */
-.hero .video {
-  position: relative;
-  aspect-ratio: 16 / 10;
-  width: 100%;
-  max-width: 800px; /* Keeps it from stretching too wide in centered layout */
-  background: var(--paper-warm);
-  border: 2px solid var(--line);
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: var(--shadow-lg);
-}
-
-.hero .video:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 32px rgba(31, 33, 25, 0.15);
-}
-
-.hero .video .play {
-  width: 72px;
-  height: 72px;
-  background: white;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.5rem;
-  color: var(--ink);
-  box-shadow: var(--shadow-md);
-  transition: all 0.2s ease;
-}
-
-.hero .video:hover .play {
-  transform: scale(1.05);
-  box-shadow: var(--shadow-lg);
-}
-
-/* =========================================
-   Steps Section
-   ========================================= */
 .steps {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1.5rem;
-  padding-bottom: 6rem;
+  gap: var(--space-5);
 }
 
-.steps article {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 2rem 1.5rem;
-  background: white;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
+.steps li {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: var(--space-3);
+  align-items: start;
 }
 
-.steps article:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-md);
+.tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: var(--code-bg);
 }
 
-.steps .step-icon {
-  width: 48px;
-  height: 48px;
-  background: var(--green-soft);
-  border-radius: 12px;
+.tile svg {
+  width: 18px;
+  height: 18px;
+}
+
+.tile {
+  overflow: hidden;
+}
+
+.tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.game-name .tile {
+  width: 40px;
+  height: 40px;
+}
+
+.game-name {
   display: flex;
   align-items: center;
-  justify-content: center;
-  margin-bottom: 0.75rem;
-}
-
-.steps .step-icon svg {
-  width: 24px;
-  height: 24px;
-  color: var(--green);
-}
-
-.steps span {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--red);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  gap: var(--space-3);
 }
 
 .steps p {
-  font-size: 0.9375rem;
   color: var(--muted);
-  line-height: 1.6;
 }
 
-/* =========================================
-   Responsive
-   ========================================= */
-@media (max-width: 1024px) {
-  .steps {
-    grid-template-columns: repeat(2, 1fr);
-  }
+.games {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 
-@media (max-width: 768px) {
-  .hero {
-    padding: 3rem 0 4rem;
-    gap: 2rem;
-  }
-
-  .steps {
-    grid-template-columns: 1fr;
-    max-width: 480px;
-    margin: 0 auto;
-  }
+.games li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
-@media (max-width: 640px) {
-  main {
-    padding: 0 1rem;
-  }
+.games li + li {
+  border-top: 1px solid var(--border);
+}
 
-  h1 {
-    font-size: 2.25rem;
-  }
+.games .detail {
+  color: var(--muted);
+  font-size: 14px;
+  text-align: right;
+}
 
-  .hero .badges {
+.foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-6) 0 var(--space-7);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 560px) {
+  .games li {
     flex-direction: column;
-    width: 100%;
-    max-width: 320px;
+    gap: var(--space-1);
   }
 
-  .hero .badges span {
-    width: 100%;
-    justify-content: center;
+  .games .detail {
+    text-align: left;
   }
 
-  .hero .install code {
-    font-size: 0.8rem; /* Slightly smaller on mobile to fit better */
-  }
-
-  .steps article {
-    padding: 1.5rem 1.25rem;
+  .hero {
+    padding-top: var(--space-7);
   }
 }

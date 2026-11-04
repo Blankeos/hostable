@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use hostable_core::{
-    ArkSurvivalEvolvedAdapter, BackupHook, BackupManifest, BackupSpec, ConsoleCapability,
-    GameAdapter, GameKind, MinecraftAdapter, ServerRecord,
+    BackupHook, BackupManifest, BackupSpec, ConsoleCapability, MinecraftAdapter, ServerRecord,
+    adapter_for,
 };
 use sha2::{Digest, Sha256};
 use std::cmp::Reverse;
@@ -57,6 +57,7 @@ impl BackupRunner {
             .with_context(|| format!("failed to create {}", archive_path.display()))?;
         let encoder = zstd::Encoder::new(archive, 3)?;
         let mut tar = tar::Builder::new(encoder);
+        tar.follow_symlinks(false);
         let included_paths = append_backup_paths(&mut tar, server, &spec)?;
         let encoder = tar.into_inner()?;
         encoder.finish()?;
@@ -96,14 +97,18 @@ fn run_pre_copy_hook(server: &ServerRecord, spec: &BackupSpec) -> Vec<String> {
                 Vec::new()
             }
         }
+        BackupHook::RconSave => match adapter_for(server.game).console() {
+            Some(console) => match console.send_command(server, "Save") {
+                Ok(_) => Vec::new(),
+                Err(error) => vec![format!("save hook failed: {error}")],
+            },
+            None => Vec::new(),
+        },
     }
 }
 
 fn backup_spec(server: &ServerRecord) -> BackupSpec {
-    match server.game {
-        GameKind::Minecraft => MinecraftAdapter.backup_spec(server),
-        GameKind::ArkSurvivalEvolved => ArkSurvivalEvolvedAdapter.backup_spec(server),
-    }
+    adapter_for(server.game).backup_spec(server)
 }
 
 fn append_backup_paths(
@@ -113,7 +118,12 @@ fn append_backup_paths(
 ) -> Result<Vec<PathBuf>> {
     let mut included = Vec::new();
     for path in &spec.include_paths {
-        if !path.exists() {
+        // Root runs this over a tree the game user can write to: never follow a symlink
+        // that could point at something outside the server folder.
+        let is_symlink = fs::symlink_metadata(path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if is_symlink || !path.exists() {
             continue;
         }
 

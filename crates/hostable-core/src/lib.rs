@@ -4,6 +4,7 @@ pub mod backup;
 pub mod config;
 pub mod error;
 pub mod games;
+pub mod minecraft_admin;
 pub mod modrinth;
 pub(crate) mod rcon;
 pub mod registry;
@@ -16,7 +17,9 @@ pub use adapter::{
 };
 pub use backup::{BackupHook, BackupManifest, BackupPolicy, BackupSpec, RetentionPolicy, S3Config};
 pub use error::{HostableError, Result};
-pub use games::{ArkSurvivalEvolvedAdapter, MinecraftAdapter};
+pub use games::{
+    ALL_GAMES, ArkSurvivalEvolvedAdapter, MinecraftAdapter, PalworldAdapter, adapter_for, palworld,
+};
 pub use modrinth::{
     ModrinthFile, ModrinthInstallFile, ModrinthInstallSelection, ModrinthProjectType,
     ModrinthSearchHit, ModrinthSearchResponse, ModrinthVersion,

@@ -80,6 +80,11 @@ pub struct ModrinthInstallSelection {
     pub project_type: ModrinthProjectType,
     pub version_id: String,
     pub version_number: String,
+    /// Minecraft versions and loaders this version supports (a modpack pins them).
+    #[serde(default)]
+    pub game_versions: Vec<String>,
+    #[serde(default)]
+    pub loaders: Vec<String>,
     pub file: ModrinthInstallFile,
     pub dependencies: Vec<ModrinthInstallFile>,
 }

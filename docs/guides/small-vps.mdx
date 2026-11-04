@@ -1,0 +1,46 @@
+---
+title: "Small VPS: RAM, swap, disk"
+description: Fit a game server on a cheap machine and keep the disk from filling up.
+---
+
+## Check before you install
+
+```bash
+sudo hostable preflight palworld --memory-mb 8192
+```
+
+It reports RAM, swap, free disk and the servers already running, and warns when:
+
+- the game wants more memory than the machine has (RAM plus swap),
+- another running server plus this one would not fit in RAM,
+- there is no swap at all,
+- the disk is too small (this one blocks creation).
+
+## Swap
+
+Swap is slow, but it turns a sudden out-of-memory kill into a slowdown. A few GB is a good safety net on an 8 GB machine.
+
+```bash
+sudo hostable swap 4096
+```
+
+Creates `/swapfile`, enables it and adds it to `/etc/fstab`. It does nothing if swap is already on.
+
+## One heavy server at a time
+
+Two modded Minecraft servers, or Palworld plus anything big, will not fit in 8 GB. Hostable warns, and each game's service has a raised OOM score so the kernel sacrifices a game before it sacrifices `sshd` or the daemon.
+
+## Disk
+
+```bash
+sudo hostable disk
+```
+
+Lists the biggest things, largest first: journald, apt caches, backups per server, folders in `/srv/hostable/servers` that no server uses, and large folders under `/home` (old server copies, world backups). Only the safe items can be cleaned by Hostable:
+
+```bash
+sudo hostable disk --clean journal   # trims logs to 200 MB
+sudo hostable disk --clean apt       # clears downloaded packages
+```
+
+Everything else is reported and left for you to delete by hand.

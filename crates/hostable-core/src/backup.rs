@@ -33,6 +33,8 @@ pub struct BackupSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackupHook {
     MinecraftRconSaveAll,
+    /// Ask the game to flush its world through its RCON console (`Save`).
+    RconSave,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

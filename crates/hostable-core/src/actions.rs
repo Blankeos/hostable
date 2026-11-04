@@ -62,6 +62,14 @@ pub enum HostAction {
         name: String,
         contents: String,
     },
+    /// Create or update `PalWorldSettings.ini`. When the file is missing or has no
+    /// OptionSettings yet, it is seeded from `seed_from` (the game's default file).
+    PatchPalworldSettings {
+        path: PathBuf,
+        seed_from: Option<PathBuf>,
+        options: Vec<(String, String)>,
+        owner: String,
+    },
     SystemdDaemonReload,
     SystemdEnable {
         unit: String,

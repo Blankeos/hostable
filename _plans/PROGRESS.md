@@ -1,5 +1,60 @@
 # Hostable Progress
 
+Last updated: 2026-11-03
+
+## Session summary (2026-11-03)
+
+Reviewed with an Opus advisor, then hardened and extended. Verified on a real systemd Debian 12 x86_64 VM (OrbStack), not only in Docker.
+
+### Security and correctness (from the review)
+
+- Daemon only answers loopback unless the web admin is enabled; remote requests can never use the operator token or set the first admin password.
+- Operator token `0600 root`; `/var/lib/hostable` and `/etc/hostable` root-owned (game user owns only `/srv/hostable`).
+- Input validation: names, install paths under `/srv/hostable/servers`, no control chars, no shell metacharacters in extras, derived service names only, raw register endpoint removed, duplicate names refused.
+- Login throttle (5 wrong -> 429 for 60s), 7-day session expiry, constant-time token compare.
+- Backups never follow symlinks; `server.properties` and `PalWorldSettings.ini` are `0600`.
+- UFW is now actually enabled (SSH allowed first); the daemon port is only opened while the web admin is on.
+- RCON client fixed (single-write packets, Source auth quirk, bigger packets). Found by live test: Minecraft dropped the old client, so console and pre-backup saves never worked.
+- systemd units: `SuccessExitStatus=143`, `TimeoutStopSec`, `OOMScoreAdjust`; no more `AlwaysPreTouch`; stops no longer end `failed`.
+
+### Features
+
+- **Palworld adapter** (SteamCMD 2394010, UDP 8211): seeds `PalWorldSettings.ini` from the default file, RCON console, backup hook, update plan, `WorldOption.sav` override diagnosis.
+- `adapter_for(kind)` replaces the per-game match blocks.
+- **Import really works now**: writes a unit running as the folder's owner, keeps the owner's launch script, reads the real port and RCON settings, never auto-enables (no port fight with the old service).
+- Port allocator for Minecraft and Palworld (second server gets the next free port); start refuses when a port is already taken.
+- Preflight (RAM/swap/disk/running servers), swap creation, disk doctor (+ safe journal/apt cleaning).
+- Safe stop/restart/update: refuses while players are online (`--force`), saves first, update backs up first and restarts even if the update failed.
+- `hostable <command>` CLI (list, create, import, start, stop, restart, backup, update, console, logs, doctor, disk, swap, preflight).
+- Docs site in `docs/` (gittydocs), builds clean with `gittydocs build ./docs`.
+
+### Verified (VM)
+
+- Fresh install via `install.sh`, daemon survives VM restart.
+- Minecraft create/start/console/backup/restart/stop through the API and CLI.
+- Import of a user-owned folder (runs as that user, RCON picked up).
+- Remote lockdown: 403/401/429 matrix from a second machine; web admin enable/disable opens/closes the firewall port.
+- Port-conflict refusal, port allocation, preflight, disk report, journal trim, swap no-op.
+
+### Not verified yet
+
+- Palworld/ARK real install and run: SteamCMD is 32-bit x86 and segfaults under Rosetta, so the VM test stopped right after SteamCMD started (apt, user, directories and steamcmd launch worked). Needs a real x86_64 VPS.
+- Player-count guard against a live game with players (parsers are unit-tested).
+- Admin-web login after the 60s lockout window; real S3 provider; 24h soak.
+- GitHub release + `curl | sh` from the real release URL.
+
+### Still open
+
+- Per-server Linux users (all games share `hostable`).
+- Job runner with progress streaming (long installs hold one HTTP request open).
+- TUI screens for update/doctor/disk (the CLI covers them).
+- ARK: one instance per host (fixed ports).
+- In-place Minecraft modpack updater.
+
+---
+
+## Earlier status (2026-05-28)
+
 Last updated: 2026-05-28
 
 ## Completion

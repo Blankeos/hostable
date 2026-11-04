@@ -1,0 +1,32 @@
+---
+title: Import an existing server
+description: Manage a server you already set up by hand, without moving or re-owning its files.
+---
+
+If you already run a server from a folder (a modpack in `/home/you/cobbleverse`, a Palworld install, ...), Hostable can manage it in place.
+
+```bash
+sudo hostable import minecraft "Cobbleverse" /home/you/cobbleverse
+```
+
+Use `--dry-run` first to see what it will do.
+
+## What import does
+
+- Detects the game from its files (`server.properties` for Minecraft, `PalServer.sh` for Palworld, the ARK binary).
+- Reads the **real port** from the server's config, and the **RCON port and password** if RCON is on, so the console and safe restarts work immediately.
+- Writes a systemd unit that runs the server **as the folder's current owner**. Files are not moved or re-owned.
+- Uses your own launch script (`start.sh` or `run.sh`) when there is one, so your memory flags and tweaks are kept.
+- Opens the server's firewall port.
+
+## What import does not do
+
+- It does **not enable or start** the new unit. If your old service is still running, both would fight over the same port. Stop and disable the old service, then run `hostable start cobbleverse`.
+- It refuses folders owned by root, system folders like `/etc` or `/home`, and anything that does not look like a server.
+
+> [!TIP]
+> Moving from a hand-made setup: `sudo systemctl disable --now old-service`, import, `hostable start <name>`, then check `hostable doctor <name>`.
+
+## Names
+
+The name you give becomes the server id (`Cobbleverse` becomes `cobbleverse`, spaces turn into dashes). Names may contain letters, digits, spaces, `-`, `_` and `.`.

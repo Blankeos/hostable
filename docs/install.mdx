@@ -1,0 +1,74 @@
+---
+title: Install
+description: Put Hostable on a fresh Debian or Ubuntu VPS.
+---
+
+## Requirements
+
+- A VPS running **Debian 12/13** or **Ubuntu 24.04**, x86_64 or arm64 (Steam games need x86_64).
+- SSH access with `sudo`.
+- Enough RAM for your game. See [Small VPS](/guides/small-vps).
+
+## Install
+
+SSH into the VPS and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/blankeos/hostable/main/install.sh | sh
+```
+
+The installer:
+
+<Steps>
+
+### Installs the basics
+
+`ca-certificates`, `tar`, `xz-utils`, `openssl` and `ufw` through apt. Installing `ufw` does not turn it on yet.
+
+### Downloads the release
+
+It picks the archive for your CPU, installs `hostable` and `hostabled` into `/usr/local/bin`, and the web admin files into `/var/lib/hostable`.
+
+### Creates the service user
+
+A system user called `hostable` owns the game servers under `/srv/hostable/servers`.
+
+### Starts the daemon
+
+`hostabled` is installed as a systemd service and starts right away. It only answers connections from the VPS itself.
+
+</Steps>
+
+Then open the app:
+
+```bash
+sudo hostable
+```
+
+> [!IMPORTANT]
+> Run `hostable` with `sudo`. The daemon's operator token (`/etc/hostable/operator-token`) is readable by root only, on purpose.
+
+## Installer options
+
+Set these before the command to change defaults:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HOSTABLE_VERSION` | `latest` | Release tag to install. |
+| `HOSTABLE_INSTALL_DIR` | `/usr/local/bin` | Where the binaries go. |
+| `HOSTABLE_SERVER_DIR` | `/srv/hostable` | Servers and backups live here. |
+| `HOSTABLE_SKIP_SERVICE` | `0` | Set `1` to skip the systemd service (for containers). |
+| `HOSTABLE_DOWNLOAD_URL` | unset | Install from a specific archive URL or `file://` path. |
+
+## Upgrade
+
+Run the same install command again. It keeps your servers, settings and token, and restarts the daemon.
+
+## Uninstall
+
+```bash
+sudo systemctl disable --now hostabled
+sudo rm /usr/local/bin/hostable /usr/local/bin/hostabled /etc/systemd/system/hostabled.service
+```
+
+Your servers stay in `/srv/hostable`. Remove that folder by hand if you want them gone.

@@ -1,0 +1,79 @@
+---
+title: Palworld
+description: A Palworld dedicated server through SteamCMD, with a co-op save import path.
+---
+
+## Requirements
+
+Pocketpair recommends **16 GB RAM** and about 12 GB of disk. 8 GB works for a few players if you add swap. Run `hostable preflight palworld` to see what your VPS can do.
+
+## Create
+
+```bash
+sudo hostable create palworld "Friends Pals" --accept-license --join-password hunter2hunter2
+```
+
+Hostable will:
+
+<Steps>
+
+### Install SteamCMD
+
+Enables Debian `contrib`/`non-free`, adds the 32-bit architecture and installs `steamcmd`.
+
+### Download the server
+
+App `2394010` through `/usr/games/steamcmd`, run as the `hostable` user.
+
+### Seed the config
+
+Palworld leaves `PalWorldSettings.ini` empty on first boot, which silently runs every setting at its default. Hostable copies `DefaultPalWorldSettings.ini` first, then sets the name, passwords, player limit and ports.
+
+### Open one port
+
+`8211/udp`, or the next free UDP port. The RCON port stays closed to the internet.
+
+</Steps>
+
+Settings Hostable manages: `ServerName`, `ServerPassword` (the join password), `AdminPassword`, `ServerPlayerMaxNum` (default 8), `PublicPort`, `RCONEnabled`, `RCONPort`.
+
+## Change a setting
+
+Edit `Pal/Saved/Config/LinuxServer/PalWorldSettings.ini` from the TUI config editor, or by hand, then restart.
+
+> [!WARNING]
+> If you imported a co-op save, a `WorldOption.sav` file in the world folder **overrides** `PalWorldSettings.ini`. Changing `BaseCampWorkerMaxNum` in the INI will appear to do nothing. Run `hostable doctor <server>`: it lists this file. Move it aside (do not delete it) and restart:
+>
+> ```bash
+> sudo -u hostable mv Pal/Saved/SaveGames/0/<WORLD_ID>/WorldOption.sav{,.bak}
+> ```
+
+## Bring a co-op save
+
+Co-op saves belong to the host character `000...001`. To resume on a dedicated server you convert that player id to the host's Steam-based id with a community save tool, then copy the converted world into `Pal/Saved/SaveGames/0/<WORLD_ID>/`.
+
+1. Back up both the original co-op folder and the server's `Pal/Saved`.
+2. Only the host needs converting. Other Steam players already use their normal ids.
+3. Stop the server, copy the converted folder in, make it owned by the server user, start it.
+4. Have everyone join and check characters, bases and Pals before deleting any backup.
+
+## Updating
+
+```bash
+sudo hostable update friends-pals
+```
+
+It stops the server (refusing if players are online), takes a backup, runs `app_update 2394010 validate`, starts it again, and prints the Steam build before and after. See [Updating a server](/guides/updating).
+
+> [!TIP]
+> Clients must match the server version. If friends cannot join after a game patch, update the server.
+
+## Console
+
+```bash
+sudo hostable console friends-pals Info
+sudo hostable console friends-pals ShowPlayers
+sudo hostable console friends-pals Broadcast Restarting_in_5_minutes
+```
+
+Palworld broadcast messages do not keep spaces; use underscores.

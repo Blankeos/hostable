@@ -1,9 +1,13 @@
 [package]
 name = "hostable-core"
 version.workspace = true
+description = "Game adapters, registry and RCON for hostable"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
 
 [dependencies]
 serde.workspace = true

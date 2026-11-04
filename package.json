@@ -7,7 +7,7 @@
     "web/landing"
   ],
   "scripts": {
-    "build:web": "bun --filter '*' run build",
+    "build:web": "bun run build:admin && bun run build:landing",
     "build:admin": "cd web/admin && bun run build",
     "build:landing": "cd web/landing && bun run build"
   }

@@ -1,0 +1,43 @@
+---
+title: Backups
+description: Manual backups with local retention and optional S3-compatible storage.
+---
+
+```bash
+sudo hostable backup friends-smp
+```
+
+Archives are written to `/srv/hostable/backups/<server>/` as `.tar.zst` with a manifest and SHA-256.
+
+## Consistency
+
+Hostable asks the game to save first (`save-all` for Minecraft, `Save` for Palworld) so the copy is not mid-write. It does **not** stop the server. If the console is unreachable, the backup still runs and says so in its warnings.
+
+## What is included
+
+| Game | Included |
+| --- | --- |
+| Minecraft | world, server.properties, ops/whitelist/bans, config, mod manifest |
+| Palworld | `Pal/Saved` (worlds, players, config) without logs |
+| ARK | `ShooterGame/Saved` |
+
+Symlinks inside a server folder are never followed, so a link cannot pull files from elsewhere into a backup.
+
+## Retention and S3
+
+Keep the last N backups locally in **Settings**. You can also upload to any S3-compatible bucket (AWS S3, Cloudflare R2, Backblaze B2). Put the keys in `/etc/hostable/secrets.env`:
+
+```bash title="/etc/hostable/secrets.env"
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+## Restore
+
+Stop the server, then extract the archive over the server folder as the server's user:
+
+```bash
+sudo systemctl stop hostable-friends-smp
+sudo -u hostable tar --zstd -xf /srv/hostable/backups/friends-smp/friends-smp-<timestamp>.tar.zst -C /srv/hostable/servers/friends-smp
+sudo systemctl start hostable-friends-smp
+```

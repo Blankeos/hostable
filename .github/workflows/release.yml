@@ -14,6 +14,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify the tag is on main and matches the workspace version
+        if: github.event_name == 'push'
+        run: |
+          set -eu
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" origin/main; then
+            echo "Release tag ${GITHUB_REF_NAME} points to a commit that is not on main"
+            exit 1
+          fi
+          cargo_version="$(awk '/^\[workspace.package\]/{f=1;next} /^\[/{f=0} f && /^version *=/{gsub(/[" ]/,"",$0); sub(/version=/,"",$0); print; exit}' Cargo.toml)"
+          if [ "v${cargo_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Version mismatch: tag=${GITHUB_REF_NAME} cargo=v${cargo_version}"
+            exit 1
+          fi
 
       - uses: dtolnay/rust-toolchain@stable
 

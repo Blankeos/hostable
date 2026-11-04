@@ -1,0 +1,45 @@
+---
+title: Your first server
+description: From a fresh VPS to friends joining, in a few minutes.
+---
+
+## 1. Check the machine
+
+```bash
+sudo hostable preflight palworld
+```
+
+This prints RAM, swap and free disk, and warns if the game will not fit. See [Small VPS](/guides/small-vps) if it does.
+
+## 2. Create the server
+
+In the TUI choose **Create new server**, pick a game, and follow the form. Or in one command:
+
+```bash
+sudo hostable create palworld "Friends Pals" --accept-license --join-password hunter2hunter2
+```
+
+Preview first with `--dry-run`: it prints the steps without changing anything.
+
+> [!NOTE]
+> `--accept-license` is your confirmation of the game's terms (the Minecraft EULA, or the Steam terms for ARK and Palworld). Hostable never accepts them silently.
+
+## 3. Start it
+
+```bash
+sudo hostable start friends-pals
+sudo hostable logs friends-pals
+```
+
+Steam games take a few minutes on first start while they create the world.
+
+## 4. Share the address
+
+Find your public IP with `curl ifconfig.me`. Friends connect to `IP:PORT`. The port is shown by `hostable list`.
+
+> [!TIP]
+> Hostable opens the ports on the VPS itself. Some providers (Oracle, AWS, GCP, Azure) also have a firewall in their dashboard. If friends cannot connect, open the same port there.
+
+## 5. Optional: a name instead of an IP
+
+In your DNS provider add an **A record** pointing to the VPS IP. If you use Cloudflare, set it to **DNS only** (grey cloud): its proxy does not carry game traffic.

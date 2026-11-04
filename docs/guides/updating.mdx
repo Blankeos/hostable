@@ -1,0 +1,45 @@
+---
+title: Updating a server
+description: Steam games update in place, with a backup first.
+---
+
+## Steam games (Palworld, ARK)
+
+```bash
+sudo hostable update friends-pals
+```
+
+In order:
+
+<Steps>
+
+### Checks for players
+
+If anyone is online, it stops here. Add `--force` to update anyway.
+
+### Backs up
+
+If the backup fails, nothing is changed.
+
+### Stops, updates, starts
+
+Saves the world, stops the service, runs SteamCMD `app_update <id> validate`, and starts it again. The server is started again even if the update failed, so a bad update does not leave you offline.
+
+### Reports the build
+
+Prints the Steam build id before and after. Equal ids mean you were already current.
+
+</Steps>
+
+## Modpacks and Minecraft versions
+
+Minecraft is not updated in place, because mods and worlds depend on each other. The safe pattern:
+
+1. Create a new server (a fresh folder) with the new modpack or version.
+2. Stop the old one, copy `world/` into the new folder (keep the old one as a backup).
+3. Start the new one and check the logs.
+
+An in-place Minecraft updater is on the roadmap.
+
+> [!TIP]
+> Want a fresh world with the latest pack but to keep the old one? Create the new server and leave the old folder untouched. Hostable gives it a different port, so both can exist; just do not run both on a small VPS.

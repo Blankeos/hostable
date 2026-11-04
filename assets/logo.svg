@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 44" width="48" height="44">
+  <defs>
+    <mask id="notch">
+      <rect width="48" height="44" fill="#fff"/>
+      <path d="M32 15.5 49 20v4l-17 4.5z" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="48" height="44" rx="10" fill="#C4481A" mask="url(#notch)"/>
+</svg>

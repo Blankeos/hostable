@@ -122,7 +122,7 @@ if [ ! -f "$OPERATOR_TOKEN" ]; then
   else
     dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n' > "$TMP_DIR/operator-token"
   fi
-  as_root install -m 0644 "$TMP_DIR/operator-token" "$OPERATOR_TOKEN"
+  as_root install -m 0600 -o root -g root "$TMP_DIR/operator-token" "$OPERATOR_TOKEN"
 fi
 
 if [ ! -f "$SECRETS_FILE" ]; then
@@ -139,7 +139,13 @@ if [ "$SKIP_SERVICE" != "1" ]; then
     as_root useradd --system --create-home --shell /usr/sbin/nologin hostable
   fi
 
-  as_root chown -R hostable:hostable "$SERVER_DIR" "$STATE_DIR"
+  # Game servers (and anything they run) own only the server data. The registry,
+  # web admin assets and config stay root-owned so a compromised game server
+  # cannot steer the root daemon.
+  as_root chown -R hostable:hostable "$SERVER_DIR"
+  as_root chown -R root:root "$STATE_DIR" "$CONFIG_DIR"
+  as_root chmod 0755 "$STATE_DIR" "$CONFIG_DIR"
+  as_root chmod 0600 "$OPERATOR_TOKEN" "$SECRETS_FILE"
 
   cat > "$TMP_DIR/hostabled.service" <<EOF
 [Unit]
@@ -159,11 +165,15 @@ EOF
   as_root install -m 0644 "$TMP_DIR/hostabled.service" "$SERVICE_FILE"
   as_root systemctl daemon-reload
   as_root systemctl enable hostabled
-  as_root ufw allow 8080/tcp >/dev/null 2>&1 || true
+  # Older installs opened the daemon port to the world. Close it unless the web admin is on.
+  if ! grep -Eq '"enabled"[[:space:]]*:[[:space:]]*true' "$CONFIG_DIR/settings.json" 2>/dev/null; then
+    as_root ufw delete allow 8080/tcp >/dev/null 2>&1 || true
+  fi
   as_root systemctl restart hostabled
 else
   echo "Skipping systemd service setup."
 fi
 
 echo "Hostable installed."
-echo "Run: hostable"
+echo "Run: sudo hostable"
+echo "The daemon only accepts local connections until you enable the web admin in Settings."
