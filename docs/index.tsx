@@ -24,10 +24,10 @@ export const description =
 const INSTALL = "curl -fsSL https://raw.githubusercontent.com/blankeos/hostable/main/install.sh | sh"
 
 const STEPS = [
-  { icon: IconDownload, title: "Install", body: "Run one command on a fresh Debian or Ubuntu VPS." },
-  { icon: IconCube, title: "Create", body: "Pick a game, accept its license, review the plan." },
-  { icon: IconUserPlus, title: "Invite", body: "Hostable opens the firewall port and shows the join address." },
-  { icon: IconGearSix, title: "Manage", body: "Start, stop, update and back up from the terminal or a web page." },
+  { icon: IconDownload, title: "Install" },
+  { icon: IconCube, title: "Create" },
+  { icon: IconUserPlus, title: "Invite" },
+  { icon: IconGearSix, title: "Manage" },
 ]
 
 const GAMES = [
@@ -63,13 +63,10 @@ export default function Page() {
       <main class="hl-wrap">
         <section class="hl-hero">
           <h1>Game servers for you and your friends, in minutes.</h1>
-          <p class="hl-lede">
-            The cheapest way to run a game server is a VPS: no platform fees, you only pay for
-            compute. It is also fiddly. Hostable does the setup for you.
-          </p>
+          <p class="hl-lede">Hostable sets up game servers on your own VPS.</p>
           <CopyCommand />
           <p class="hl-hint">
-            Run it after you SSH into your VPS, then type <code>sudo hostable</code>. <a href={withBasePath("/introduction")}><u>Read the docs</u></a>.
+            Run on your VPS, then <code>sudo hostable</code>. <a href={withBasePath("/introduction")}><u>Docs</u></a>
           </p>
           <ul class="hl-facts">
             <li>
@@ -88,10 +85,7 @@ export default function Page() {
         </section>
 
         <section class="hl-block" aria-label="Hostable terminal app demo">
-          <div class="hl-head">
-            <h2>In your terminal</h2>
-            <p class="hl-hint">The real app, captured as text and replayed.</p>
-          </div>
+          <h2>In your terminal</h2>
           <TuiDemo />
         </section>
 
@@ -103,10 +97,7 @@ export default function Page() {
                 <span class="hl-tile" aria-hidden="true">
                   <step.icon />
                 </span>
-                <div>
-                  <h3>{step.title}</h3>
-                  <p>{step.body}</p>
-                </div>
+                <h3>{step.title}</h3>
               </li>
             ))}
           </ol>
