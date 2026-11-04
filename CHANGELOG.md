@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.4] - 2026-11-04
+
+### Features
+
+- Mouse wheel scrolls the console and lists by @Blankeos
+- Modpack view in Mods, a Config tab that opens vi, tab hint on home by @Blankeos
+
 ## [0.0.3] - 2026-11-04
 
 ### Bug Fixes
