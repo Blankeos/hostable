@@ -58,11 +58,18 @@ Set these before the command to change defaults:
 | `HOSTABLE_INSTALL_DIR` | `/usr/local/bin` | Where the binaries go. |
 | `HOSTABLE_SERVER_DIR` | `/srv/hostable` | Servers and backups live here. |
 | `HOSTABLE_SKIP_SERVICE` | `0` | Set `1` to skip the systemd service (for containers). |
+| `HOSTABLE_SKIP_DEPS` | `0` | Set `1` to skip the apt packages (upgrades do this). |
 | `HOSTABLE_DOWNLOAD_URL` | unset | Install from a specific archive URL or `file://` path. |
 
 ## Upgrade
 
-Run the same install command again. It keeps your servers, settings and token, and restarts the daemon.
+```bash
+sudo hostable upgrade
+```
+
+It downloads the latest release, checks its checksum, replaces `hostable`, `hostabled` and the web admin, and restarts the daemon. Your servers, settings and token stay as they are, and running game servers are not interrupted. `hostable upgrade --check` only says whether a newer release exists, and `hostable upgrade 0.0.2` installs a specific version.
+
+Running the install command again does the same thing.
 
 ## Uninstall
 

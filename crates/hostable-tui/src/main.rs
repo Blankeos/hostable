@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod theme;
+mod upgrade;
 
 use anyhow::Result;
 use app::App;
@@ -26,6 +27,10 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    // An upgrade replaces the binaries, so it must not need the daemon or its token.
+    if let Some(cli::Command::Upgrade { version, check }) = &args.command {
+        return upgrade::run(version.as_deref(), *check);
+    }
     if let Some(command) = args.command {
         let api = cli::Api::new(&args.daemon_url, &args.operator_token)?;
         return cli::run(command, &api);

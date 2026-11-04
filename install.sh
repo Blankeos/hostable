@@ -9,6 +9,7 @@ STATE_DIR="${HOSTABLE_STATE_DIR:-/var/lib/hostable}"
 CONFIG_DIR="${HOSTABLE_CONFIG_DIR:-/etc/hostable}"
 SERVER_DIR="${HOSTABLE_SERVER_DIR:-/srv/hostable}"
 NO_SUDO="${HOSTABLE_NO_SUDO:-0}"
+SKIP_DEPS="${HOSTABLE_SKIP_DEPS:-0}"
 SKIP_SERVICE="${HOSTABLE_SKIP_SERVICE:-0}"
 SERVICE_FILE="/etc/systemd/system/hostabled.service"
 OPERATOR_TOKEN="$CONFIG_DIR/operator-token"
@@ -50,7 +51,7 @@ if [ -r /etc/os-release ]; then
   esac
 fi
 
-if command -v apt-get >/dev/null 2>&1; then
+if [ "$SKIP_DEPS" != "1" ] && command -v apt-get >/dev/null 2>&1; then
   as_root apt-get update
   as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates tar gzip xz-utils coreutils findutils openssl ufw
 fi
@@ -96,6 +97,16 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 curl -fL "$ASSET_URL" -o "$TMP_DIR/hostable.tar"
+
+# Release archives ship a .sha256 next to them. Refuse a download that does not match.
+if command -v sha256sum >/dev/null 2>&1 && curl -fsSL "$ASSET_URL.sha256" -o "$TMP_DIR/hostable.sha256" 2>/dev/null; then
+  EXPECTED="$(cut -d ' ' -f 1 "$TMP_DIR/hostable.sha256" | head -n 1)"
+  ACTUAL="$(sha256sum "$TMP_DIR/hostable.tar" | cut -d ' ' -f 1)"
+  if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+    echo "Checksum mismatch for $ASSET_URL. Nothing was installed." >&2
+    exit 1
+  fi
+fi
 tar -xf "$TMP_DIR/hostable.tar" -C "$TMP_DIR"
 
 HOSTABLE_BIN="$(find "$TMP_DIR" -type f -name hostable | head -n 1)"
