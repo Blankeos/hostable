@@ -31,12 +31,16 @@ fn minecraft_only(server: &ServerRecord) -> Result<(), ApiError> {
 }
 
 fn server_type(server: &ServerRecord) -> String {
-    server
+    let recorded = server
         .adapter_config
         .get("server_type")
         .and_then(|value| value.as_str())
-        .unwrap_or("vanilla")
-        .to_string()
+        .unwrap_or("vanilla");
+    // Older imports recorded Fabric servers as vanilla; trust the folder over the record.
+    if recorded == "vanilla" && admin::has_fabric_launcher(&server.install_path) {
+        return "fabric".to_string();
+    }
+    recorded.to_string()
 }
 
 fn rcon(server: &ServerRecord, command: &str) -> anyhow::Result<String> {

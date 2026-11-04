@@ -59,7 +59,7 @@ impl GameAdapter for MinecraftAdapter {
             )));
         }
 
-        let server_type = if path.join("fabric-server-launch.jar").exists() {
+        let server_type = if crate::minecraft_admin::has_fabric_launcher(path) {
             Some(ServerType::Fabric)
         } else if path.join("paper.jar").exists() {
             Some(ServerType::Paper)
