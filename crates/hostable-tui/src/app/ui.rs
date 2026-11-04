@@ -1,5 +1,5 @@
-//! Chrome and the two main screens: header, footer, toast, server list,
-//! server detail, and the two overlays (confirm and help).
+//! Chrome and the main screens: header, footer, toast, server list,
+//! server sidebar, and the two overlays (confirm and help).
 
 use super::{App, Confirm, Mode, Screen, game_label, protocol_label};
 use crate::theme::{Health, Level, status_badge, theme};
@@ -65,6 +65,7 @@ impl App {
             return;
         }
 
+        self.wide = area.width >= 100;
         let compact = area.height < 24;
         let toast = self
             .active_toast()
@@ -85,9 +86,25 @@ impl App {
             horizontal: 1,
             vertical: 0,
         });
-        match self.active_screen {
-            Screen::Server => self.render_servers(frame, main),
-            Screen::Settings => self.render_settings(frame, main),
+        if self.wide
+            && self.operator_token.is_some()
+            && self.connected == Some(true)
+            && !self.servers.is_empty()
+            && matches!(
+                self.mode,
+                Mode::Normal
+                    | Mode::Manage
+                    | Mode::EditS3
+                    | Mode::EditAdminWeb
+                    | Mode::EditAdminPassword
+            )
+        {
+            self.render_workspace(frame, main);
+        } else {
+            match self.active_screen {
+                Screen::Server => self.render_servers(frame, main),
+                Screen::Settings => self.render_settings(frame, main),
+            }
         }
         if let Some((level, text)) = toast
             && toast_height > 0
@@ -103,6 +120,84 @@ impl App {
         }
     }
 
+    /// Wide layout: the server list is a sidebar, the selected server's
+    /// tabs fill the rest, and Settings sits at the sidebar's foot.
+    fn render_workspace(&self, frame: &mut Frame<'_>, area: Rect) {
+        let t = theme();
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(24), Constraint::Min(40)])
+            .split(area);
+        let side = columns[0];
+        let divider = Block::default()
+            .borders(Borders::RIGHT)
+            .border_style(t.faint());
+        let inner = divider.inner(side);
+        frame.render_widget(divider, side);
+
+        let sidebar_focus = self.mode == Mode::Normal && self.active_screen == Screen::Server;
+        let mut lines = vec![
+            Line::from(Span::styled("SERVERS", t.muted())),
+            Line::raw(""),
+        ];
+        for (index, server) in self.servers.iter().enumerate() {
+            let selected = self.active_screen == Screen::Server && index == self.selected_server;
+            let health = Health::from_systemd(self.server_status(&server.id.0));
+            let marker = if selected {
+                Span::styled("▌", if sidebar_focus { t.accent() } else { t.faint() })
+            } else {
+                Span::raw(" ")
+            };
+            let name_style = if selected {
+                t.title()
+            } else {
+                Style::new().fg(t.text)
+            };
+            let mut spans = vec![marker, Span::raw(" ")];
+            spans.extend(status_badge(health, false));
+            spans.push(Span::raw(" "));
+            let room = inner.width.saturating_sub(5) as usize;
+            let name: String = server.name.chars().take(room).collect();
+            spans.push(Span::styled(name, name_style));
+            lines.push(Line::from(spans));
+        }
+        lines.push(Line::from(Span::styled("  + n new server", t.muted())));
+        frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+
+        let settings_selected = self.active_screen == Screen::Settings;
+        let foot = Rect {
+            y: inner.y + inner.height.saturating_sub(1),
+            height: 1.min(inner.height),
+            ..inner
+        };
+        let settings = Line::from(vec![
+            if settings_selected {
+                Span::styled("▌", t.accent())
+            } else {
+                Span::raw(" ")
+            },
+            Span::styled(
+                " Settings",
+                if settings_selected {
+                    t.title()
+                } else {
+                    t.muted()
+                },
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(settings), foot);
+
+        let main = columns[1].inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        if settings_selected {
+            self.render_settings(frame, main);
+        } else {
+            self.render_manage(frame, main);
+        }
+    }
+
     fn render_header(&self, frame: &mut Frame<'_>, area: Rect) {
         let t = theme();
         let area = if area.height >= 2 {
@@ -115,21 +210,7 @@ impl App {
         } else {
             area
         };
-        let tab = |label: &'static str, active: bool| {
-            if active {
-                Span::styled(label, t.accent())
-            } else {
-                Span::styled(label, t.muted())
-            }
-        };
-        let left = Line::from(vec![
-            Span::raw(" "),
-            Span::styled("hostable", t.accent()),
-            Span::raw("   "),
-            tab("Servers", self.active_screen == Screen::Server),
-            Span::raw("  "),
-            tab("Settings", self.active_screen == Screen::Settings),
-        ]);
+        let left = Line::from(vec![Span::raw(" "), Span::styled("hostable", t.accent())]);
         let right = self.connection_spans();
         let right_width = spans_width(&right) + 1;
         let columns = Layout::default()
@@ -194,15 +275,14 @@ impl App {
         match self.mode {
             Mode::Normal => match self.active_screen {
                 Screen::Server if self.connected == Some(false) => {
-                    vec![("r", "retry"), ("2", "settings"), ("q", "quit")]
+                    vec![("r", "retry"), (",", "settings"), ("q", "quit")]
                 }
                 Screen::Server => vec![
-                    ("↑↓", "select"),
+                    ("↑↓", "server"),
                     ("enter", "open"),
+                    ("tab", "next tab"),
                     ("n", "new"),
-                    ("c", "connect"),
-                    ("r", "refresh"),
-                    ("⇄", "settings"),
+                    (",", "settings"),
                     ("q", "quit"),
                 ],
                 Screen::Settings => vec![
@@ -211,11 +291,10 @@ impl App {
                     ("w", "web admin"),
                     ("d", "domain"),
                     ("p", "password"),
-                    ("⇄", "servers"),
+                    ("↑", "servers"),
                     ("esc", "back"),
                 ],
             },
-            Mode::ServerDetail => vec![("esc", "back"), ("y", "copy address"), ("r", "refresh")],
             Mode::CreateServer => self.create_footer_hints(),
             Mode::ConnectServer => vec![
                 ("tab", "next field"),
@@ -274,9 +353,7 @@ impl App {
 
     /// `?` is a normal character inside text fields, so help only opens elsewhere.
     pub(super) fn help_available(&self) -> bool {
-        self.confirm.is_none()
-            && !self.help
-            && matches!(self.mode, Mode::Normal | Mode::ServerDetail)
+        self.confirm.is_none() && !self.help && matches!(self.mode, Mode::Normal)
     }
 
     pub(super) fn render_server_table(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -472,131 +549,6 @@ impl App {
         );
     }
 
-    pub(super) fn render_server_detail(&self, frame: &mut Frame<'_>, area: Rect) {
-        let t = theme();
-        let Some(server) = self.servers.get(self.selected_server) else {
-            return self.render_notice(frame, area, "No server selected", &[], &[]);
-        };
-        let health = Health::from_systemd(self.server_status(&server.id.0));
-        let join = server
-            .ports
-            .first()
-            .map(|port| {
-                let host = self
-                    .admin_web
-                    .public_ip
-                    .clone()
-                    .unwrap_or_else(|| "<vps-ip>".to_string());
-                format!("{host}:{}", port.port)
-            })
-            .unwrap_or_else(|| "no public port".to_string());
-        let ports = server
-            .ports
-            .iter()
-            .map(|port| format!("{}/{}", port.port, protocol_label(port.protocol)))
-            .collect::<Vec<_>>()
-            .join("  ");
-
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // name + status
-                Constraint::Length(1), // game
-                Constraint::Length(1),
-                Constraint::Length(1), // join heading
-                Constraint::Length(3), // join box
-                Constraint::Length(1),
-                Constraint::Length(4), // details
-                Constraint::Length(1),
-                Constraint::Length(1), // actions
-                Constraint::Min(0),
-            ])
-            .split(area);
-
-        let top = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(12)])
-            .split(rows[0]);
-        frame.render_widget(
-            Paragraph::new(Span::styled(server.name.clone(), t.title())),
-            top[0],
-        );
-        frame.render_widget(
-            Paragraph::new(Line::from(status_badge(health, true))).alignment(Alignment::Right),
-            top[1],
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(game_label(server.game), t.muted())),
-            rows[1],
-        );
-
-        frame.render_widget(
-            Paragraph::new(Span::styled("Join address", t.muted())),
-            rows[3],
-        );
-        let box_width = (join.chars().count() as u16 + 4).max(24).min(rows[4].width);
-        let join_box = Rect {
-            width: box_width,
-            ..rows[4]
-        };
-        frame.render_widget(
-            Paragraph::new(Span::styled(join, t.title())).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(t.faint())
-                    .padding(ratatui::widgets::Padding::horizontal(1)),
-            ),
-            join_box,
-        );
-
-        let kv = |label: &'static str, value: String| {
-            Line::from(vec![
-                Span::styled(format!("{label:<9}"), t.muted()),
-                Span::raw(value),
-            ])
-        };
-        let details = vec![
-            kv("Ports", ports),
-            kv("Folder", server.install_path.display().to_string()),
-            kv("Service", server.service_name.clone()),
-        ];
-        frame.render_widget(Paragraph::new(Text::from(details)), rows[6]);
-
-        let running = matches!(health, Health::Online | Health::Starting);
-        let minecraft = server.game == hostable_core::GameKind::Minecraft;
-        let mut actions: Vec<(&str, &str, bool)> = vec![
-            ("s", "start", !running),
-            ("x", "stop", running),
-            ("R", "restart", running),
-            ("b", "backup", true),
-            ("c", "console", true),
-        ];
-        if minecraft {
-            actions.push(("p", "players", true));
-            actions.push(("m", "mods", true));
-        }
-        actions.push(("f", "config", true));
-        let mut spans = Vec::new();
-        for (index, (key, label, enabled)) in actions.iter().enumerate() {
-            // A rule separates the service controls from the workspaces.
-            if index == 4 {
-                spans.push(Span::styled("   │   ", t.faint()));
-            } else if index > 0 {
-                spans.push(Span::raw("   "));
-            }
-            let (key_style, label_style) = if *enabled {
-                (t.key(), t.muted())
-            } else {
-                (t.faint(), t.faint())
-            };
-            spans.push(Span::styled(*key, key_style));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(*label, label_style));
-        }
-        frame.render_widget(Paragraph::new(Line::from(spans)), rows[8]);
-    }
-
     fn render_confirm(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(Confirm {
             action,
@@ -686,9 +638,9 @@ impl App {
             (
                 "Everywhere",
                 &[
-                    ("1 / 2", "Servers / Settings"),
-                    ("tab", "switch tab or field"),
-                    ("esc", "go back or cancel"),
+                    (",", "settings"),
+                    ("tab", "next tab or field"),
+                    ("esc", "back to the sidebar, or cancel"),
                     ("ctrl-c", "quit"),
                 ],
             ),
@@ -696,9 +648,9 @@ impl App {
                 "Server list",
                 &[
                     ("↑↓ or j k", "select"),
-                    ("enter", "open"),
+                    ("enter", "focus the tabs"),
                     ("n", "new server"),
-                    ("c", "connect an existing folder"),
+                    ("C", "connect an existing folder"),
                     ("r", "refresh"),
                     ("q", "quit"),
                 ],
@@ -822,7 +774,7 @@ mod tests {
 
     #[test]
     fn list_shows_status_words_port_and_footer_hints() {
-        let screen = text(&render(&mut fixture(), 100, 24));
+        let screen = text(&render(&mut fixture(), 99, 24));
         for expected in [
             "Cobbleverse",
             "online",
@@ -845,9 +797,30 @@ mod tests {
     }
 
     #[test]
-    fn wide_terminals_add_the_folder_column() {
-        let screen = text(&render(&mut fixture(), 140, 30));
-        assert!(screen.contains("Folder") && screen.contains("/srv/hostable/servers/a"));
+    fn wide_terminals_get_a_sidebar_with_tabs() {
+        let mut app = fixture();
+        render(&mut app, 120, 30);
+        app.sync_preview();
+        let screen = text(&render(&mut app, 120, 30));
+        for expected in [
+            "SERVERS",
+            "Palworld Friends",
+            "Settings",
+            "Details",
+            "Console",
+            "Mods",
+            "Config",
+            "/srv/hostable/servers/a",
+        ] {
+            assert!(screen.contains(expected), "missing {expected:?}\n{screen}");
+        }
+        // Down past the last server lands on Settings, up returns.
+        app.handle_event(press(KeyCode::Down));
+        app.handle_event(press(KeyCode::Down));
+        app.handle_event(press(KeyCode::Down));
+        assert_eq!(app.active_screen, Screen::Settings);
+        app.handle_event(press(KeyCode::Up));
+        assert_eq!(app.active_screen, Screen::Server);
     }
 
     #[test]
@@ -920,11 +893,12 @@ mod tests {
     fn detail_shows_join_address_and_dims_impossible_actions() {
         let mut app = fixture();
         app.admin_web.public_ip = Some("203.0.113.7".into());
-        app.mode = Mode::ServerDetail;
-        let buffer = render(&mut app, 100, 24);
+        render(&mut app, 120, 30);
+        app.sync_preview();
+        let buffer = render(&mut app, 120, 30);
         let screen = text(&buffer);
         assert!(screen.contains("203.0.113.7:25565"), "{screen}");
-        assert!(screen.contains("Join address"));
+        assert!(screen.contains("Join"));
         // The server is online, so "s start" is not possible and is drawn faint.
         let row = screen
             .lines()
@@ -937,11 +911,13 @@ mod tests {
     #[test]
     fn detail_footer_does_not_repeat_the_action_bar() {
         let mut app = fixture();
-        app.mode = Mode::ServerDetail;
-        let screen = text(&render(&mut app, 100, 24));
+        render(&mut app, 120, 30);
+        app.handle_event(press(KeyCode::Enter));
+        assert_eq!(app.mode, Mode::Manage);
+        let screen = text(&render(&mut app, 120, 30));
         let last = screen.lines().last().unwrap();
         assert!(
-            last.contains("esc back") && !last.contains("restart"),
+            last.contains("esc servers") && !last.contains("restart"),
             "{last}"
         );
     }
@@ -949,7 +925,7 @@ mod tests {
     #[test]
     fn players_online_opens_a_confirm_that_starts_on_cancel() {
         let mut app = fixture();
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
         app.confirm = Some(Confirm {
             action: "stop".into(),
             ok_message: "stopped".into(),
@@ -1088,7 +1064,7 @@ mod tests {
         ]);
         let mut app = fixture();
         app.daemon_url = url;
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
 
         app.handle_event(press(KeyCode::Char('x')));
         assert_eq!(
@@ -1121,7 +1097,7 @@ mod tests {
         ]);
         let mut app = fixture();
         app.daemon_url = url;
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
         app.handle_event(press(KeyCode::Char('s')));
         assert_eq!(
             app.status,
@@ -1150,7 +1126,7 @@ mod tests {
         ]);
         let mut app = fixture();
         app.daemon_url = url;
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
 
         app.handle_event(press(KeyCode::Char('c')));
         assert_eq!(app.mode, Mode::Manage);
@@ -1179,7 +1155,7 @@ mod tests {
         app.handle_event(press(KeyCode::Up));
         assert_eq!(app.manage.console.input, "list");
         app.handle_event(press(KeyCode::Esc));
-        assert_eq!(app.mode, Mode::ServerDetail);
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]
@@ -1200,14 +1176,14 @@ mod tests {
         ]);
         let mut app = fixture();
         app.daemon_url = url;
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
         app.handle_event(press(KeyCode::Char('p')));
         assert_eq!(
             requests.recv().unwrap(),
             "GET /api/servers/a/players HTTP/1.1"
         );
 
-        let screen = text(&render(&mut app, 100, 24));
+        let screen = text(&render(&mut app, 130, 30));
         for expected in [
             "Online 2/20",
             "Whitelist 1",
@@ -1270,7 +1246,7 @@ mod tests {
         ]);
         let mut app = fixture();
         app.daemon_url = url;
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
         app.handle_event(press(KeyCode::Char('m')));
         requests.recv().unwrap();
         let screen = text(&render(&mut app, 100, 24));
@@ -1338,7 +1314,7 @@ mod tests {
         )]);
         let mut app = fixture();
         app.daemon_url = url;
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
         app.handle_event(press(KeyCode::Char('m')));
         requests.recv().unwrap();
         let screen = text(&render(&mut app, 100, 24));
@@ -1378,7 +1354,7 @@ mod tests {
         )]);
         let mut app = fixture();
         app.daemon_url = url;
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
         app.handle_event(press(KeyCode::Char('f')));
         requests.recv().unwrap();
         let screen = text(&render(&mut app, 100, 24));
@@ -1414,7 +1390,7 @@ mod tests {
         ]);
         let mut app = fixture();
         app.daemon_url = url;
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
         app.handle_event(press(KeyCode::Char('m')));
         requests.recv().unwrap();
         let screen = text(&render(&mut app, 100, 24));
@@ -1671,13 +1647,13 @@ mod tests {
     fn players_and_mods_stay_out_of_other_games() {
         let mut app = fixture();
         app.selected_server = 1; // Palworld
-        app.mode = Mode::ServerDetail;
+        app.mode = Mode::Normal;
         app.handle_event(press(KeyCode::Char('p')));
-        assert_eq!(app.mode, Mode::ServerDetail);
+        assert_eq!(app.mode, Mode::Normal);
         assert!(app.status.contains("only available for Minecraft"));
         let screen = text(&render(&mut app, 100, 24));
         assert!(
-            screen.contains("console") && !screen.contains("players"),
+            screen.contains(" Console ") && !screen.contains("Mods"),
             "{screen}"
         );
     }

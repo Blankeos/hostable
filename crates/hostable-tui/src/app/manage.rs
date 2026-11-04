@@ -1,5 +1,5 @@
 //! The per-server workspace: a live console, players (whitelist and ops) and
-//! mods (Modrinth search and install). Opened from the server detail screen.
+//! mods (Modrinth search and install). Reached from the sidebar.
 
 use super::link;
 use super::ui::centered;
@@ -28,6 +28,7 @@ const PLAYERS_POLL: Duration = Duration::from_secs(4);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum ManageTab {
     #[default]
+    Details,
     Console,
     Players,
     Mods,
@@ -37,6 +38,7 @@ pub(super) enum ManageTab {
 impl ManageTab {
     fn hint(self) -> &'static str {
         match self {
+            ManageTab::Details => "details",
             ManageTab::Console => "console",
             ManageTab::Players => "players",
             ManageTab::Mods => "mods",
@@ -46,6 +48,7 @@ impl ManageTab {
 
     fn label(self) -> &'static str {
         match self {
+            ManageTab::Details => "Details",
             ManageTab::Console => "Console",
             ManageTab::Players => "Players",
             ManageTab::Mods => "Mods",
@@ -261,13 +264,14 @@ impl Manage {
     fn tabs(&self) -> Vec<ManageTab> {
         if self.game == Some(GameKind::Minecraft) {
             vec![
+                ManageTab::Details,
                 ManageTab::Console,
                 ManageTab::Players,
                 ManageTab::Mods,
                 ManageTab::Config,
             ]
         } else {
-            vec![ManageTab::Console, ManageTab::Config]
+            vec![ManageTab::Details, ManageTab::Console, ManageTab::Config]
         }
     }
 
@@ -466,12 +470,31 @@ impl App {
     }
 
     pub(super) fn open_manage(&mut self, tab: ManageTab) {
-        if self.active_screen != super::Screen::Server {
+        let unsupported = self
+            .servers
+            .get(self.selected_server)
+            .is_some_and(|server| {
+                server.game != GameKind::Minecraft
+                    && matches!(tab, ManageTab::Players | ManageTab::Mods)
+            });
+        if unsupported {
+            self.status = "Players and mods are only available for Minecraft".to_string();
             return;
+        }
+        if self.prepare_manage(tab) {
+            self.mode = Mode::Manage;
+        }
+    }
+
+    /// Points the workspace at the selected server and loads the tab's data,
+    /// without moving focus. The sidebar uses this to preview.
+    fn prepare_manage(&mut self, tab: ManageTab) -> bool {
+        if self.active_screen != super::Screen::Server {
+            return false;
         }
         let Some(server) = self.servers.get(self.selected_server) else {
             self.status = "No server selected".to_string();
-            return;
+            return false;
         };
         let same = self.manage.server_id == server.id.0;
         let game = server.game;
@@ -480,24 +503,49 @@ impl App {
                 server_id: server.id.0.clone(),
                 server_name: server.name.clone(),
                 game: Some(game),
+                tab: self.manage.tab,
                 ..Manage::default()
             };
         }
-        if game != GameKind::Minecraft && !matches!(tab, ManageTab::Console | ManageTab::Config) {
-            self.status = "Players and mods are only available for Minecraft".to_string();
-            return;
-        }
+        let tab = if self.manage.tabs().contains(&tab) {
+            tab
+        } else {
+            if same {
+                self.status = "Players and mods are only available for Minecraft".to_string();
+                return false;
+            }
+            ManageTab::Details
+        };
         self.manage.tab = tab;
-        self.mode = Mode::Manage;
         match tab {
+            ManageTab::Details => self.poll_console(),
             ManageTab::Console => self.poll_console(),
             ManageTab::Players => self.refresh_players(),
             ManageTab::Mods => self.refresh_mods(),
             ManageTab::Config => self.refresh_config(),
         }
+        true
     }
 
-    fn switch_tab(&mut self, forward: bool) {
+    /// Keeps the workspace pointed at the sidebar's selection.
+    pub(super) fn sync_preview(&mut self) {
+        if !self.wide || self.active_screen != super::Screen::Server {
+            return;
+        }
+        let Some(server) = self.servers.get(self.selected_server) else {
+            return;
+        };
+        if self.manage.server_id != server.id.0 {
+            let tab = self.manage.tab;
+            self.prepare_manage(tab);
+        }
+    }
+
+    pub(super) fn switch_tab(&mut self, forward: bool) {
+        if self.servers.is_empty() || self.active_screen != super::Screen::Server {
+            return;
+        }
+        self.sync_preview_force();
         let tabs = self.manage.tabs();
         let at = tabs
             .iter()
@@ -509,7 +557,17 @@ impl App {
             (at + tabs.len() - 1) % tabs.len()
         };
         if tabs[next] != self.manage.tab {
-            self.open_manage(tabs[next]);
+            self.prepare_manage(tabs[next]);
+        }
+    }
+
+    fn sync_preview_force(&mut self) {
+        let Some(server) = self.servers.get(self.selected_server) else {
+            return;
+        };
+        if self.manage.server_id != server.id.0 {
+            let tab = self.manage.tab;
+            self.prepare_manage(tab);
         }
     }
 
@@ -518,7 +576,7 @@ impl App {
             self.refresh_server_statuses();
         }
         match self.manage.tab {
-            ManageTab::Console => {
+            ManageTab::Details | ManageTab::Console => {
                 if self
                     .manage
                     .console
@@ -1303,9 +1361,21 @@ impl App {
 
     // ---- keys ----
 
+    fn handle_details_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char('s') => self.start_selected(),
+            KeyCode::Char('x') => self.stop_selected(),
+            KeyCode::Char('R') => self.restart_selected(),
+            KeyCode::Char('b') => self.backup_selected(),
+            KeyCode::Char('y') => self.copy_join_address(),
+            KeyCode::Char('r') => self.refresh_servers(),
+            _ => {}
+        }
+    }
+
     pub(super) fn handle_manage_key(&mut self, code: KeyCode) {
         let typing = match self.manage.tab {
-            ManageTab::Console | ManageTab::Config => false,
+            ManageTab::Details | ManageTab::Console | ManageTab::Config => false,
             ManageTab::Players => self.manage.players.add.is_some(),
             ManageTab::Mods => {
                 self.manage.mods.search.is_some()
@@ -1327,7 +1397,7 @@ impl App {
                     self.manage.mods.pending_remove = None
                 }
                 _ => {
-                    self.mode = Mode::ServerDetail;
+                    self.mode = Mode::Normal;
                 }
             }
             return;
@@ -1337,6 +1407,7 @@ impl App {
             return;
         }
         match self.manage.tab {
+            ManageTab::Details => self.handle_details_key(code),
             ManageTab::Console => self.handle_console_tab_key(code),
             ManageTab::Players => self.handle_players_key(code),
             ManageTab::Mods => self.handle_mods_key(code),
@@ -1355,10 +1426,15 @@ impl App {
 
     pub(super) fn manage_footer_hints(&self) -> Vec<(&'static str, &'static str)> {
         match self.manage.tab {
+            ManageTab::Details => vec![
+                ("y", "copy address"),
+                ("tab", self.next_tab_label()),
+                ("esc", "servers"),
+            ],
             ManageTab::Console => {
                 let mut hints = vec![("enter", "send"), ("↑↓", "history"), ("pgup", "scroll")];
                 hints.push(("tab", self.next_tab_label()));
-                hints.push(("esc", "back"));
+                hints.push(("esc", "servers"));
                 hints
             }
             ManageTab::Players if self.manage.players.add.is_some() => {
@@ -1372,14 +1448,14 @@ impl App {
                 ("w", "whitelist on/off"),
                 ("K", "kick"),
                 ("tab", "mods"),
-                ("esc", "back"),
+                ("esc", "servers"),
             ],
             ManageTab::Config => vec![
                 ("↑↓", "select"),
                 ("enter", "open in vi"),
                 ("R", "restart"),
                 ("tab", self.next_tab_label()),
-                ("esc", "back"),
+                ("esc", "servers"),
             ],
             ManageTab::Mods if self.manage.mods.search.is_some() => {
                 let enter = if self.manage.mods.search.as_ref().is_some_and(|s| s.modpacks) {
@@ -1420,7 +1496,7 @@ impl App {
                 }
                 hints.push(("R", "restart"));
                 hints.push(("tab", self.next_tab_label()));
-                hints.push(("esc", "back"));
+                hints.push(("esc", "servers"));
                 hints
             }
         }
@@ -1430,45 +1506,180 @@ impl App {
 
     pub(super) fn render_manage(&self, frame: &mut Frame<'_>, area: Rect) {
         let t = theme();
+        // Wide and tall: name on top, tabs under it, then a rule. Otherwise
+        // the name and tabs share one line.
+        let stacked = self.wide && area.height >= 18;
+        let head_rows = if stacked { 3 } else { 1 };
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
+                Constraint::Length(head_rows),
                 Constraint::Length(1),
                 Constraint::Min(3),
             ])
             .split(area);
 
         let health = Health::from_systemd(self.server_status(&self.manage.server_id));
-        let mut head = vec![Span::styled(self.manage.server_name.clone(), t.title())];
-        head.push(Span::raw("   "));
-        for tab in self.manage.tabs() {
-            if tab == self.manage.tab {
-                head.push(Span::styled(
-                    tab.label(),
-                    t.accent().add_modifier(Modifier::UNDERLINED),
-                ));
-            } else {
-                head.push(Span::styled(tab.label(), t.muted()));
+        let focused = self.mode == Mode::Manage;
+        let tab_spans = |tabs: &[ManageTab]| {
+            let mut spans = Vec::new();
+            for tab in tabs {
+                if *tab == self.manage.tab {
+                    let style = if stacked && focused {
+                        t.accent().add_modifier(Modifier::REVERSED)
+                    } else if stacked {
+                        t.title().add_modifier(Modifier::UNDERLINED)
+                    } else {
+                        t.accent().add_modifier(Modifier::UNDERLINED)
+                    };
+                    spans.push(Span::styled(format!(" {} ", tab.label()), style));
+                } else {
+                    spans.push(Span::styled(format!(" {} ", tab.label()), t.muted()));
+                }
+                spans.push(Span::raw(if stacked { " " } else { "" }));
             }
+            spans
+        };
+        let tabs = self.manage.tabs();
+        let mut head = vec![Span::styled(self.manage.server_name.clone(), t.title())];
+        if stacked {
+            if let Some(server) = self
+                .servers
+                .iter()
+                .find(|s| s.id.0 == self.manage.server_id)
+            {
+                head.push(Span::styled(
+                    format!("  {}", super::game_label(server.game)),
+                    t.muted(),
+                ));
+            }
+        } else {
             head.push(Span::raw("  "));
+            head.extend(tab_spans(&tabs));
         }
+        let head_area = Rect {
+            height: 1,
+            ..rows[0]
+        };
         let columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(0), Constraint::Length(12)])
-            .split(rows[0]);
+            .split(head_area);
         frame.render_widget(Paragraph::new(Line::from(head)), columns[0]);
         frame.render_widget(
             Paragraph::new(Line::from(status_badge(health, true))).alignment(Alignment::Right),
             columns[1],
         );
+        if stacked {
+            let tab_row = Rect {
+                y: rows[0].y + 2,
+                height: 1,
+                ..rows[0]
+            };
+            let rule = Block::default()
+                .borders(Borders::TOP)
+                .border_style(t.faint());
+            frame.render_widget(rule, tab_row);
+            frame.render_widget(
+                Paragraph::new(Line::from(tab_spans(&tabs))),
+                Rect {
+                    y: rows[0].y + 1,
+                    height: 1,
+                    ..rows[0]
+                },
+            );
+        }
 
         match self.manage.tab {
+            ManageTab::Details => self.render_details_tab(frame, rows[1], rows[2]),
             ManageTab::Console => self.render_console_tab(frame, rows[1], rows[2]),
             ManageTab::Players => self.render_players_tab(frame, rows[1], rows[2]),
             ManageTab::Mods => self.render_mods_tab(frame, rows[1], rows[2]),
             ManageTab::Config => self.render_config_tab(frame, rows[1], rows[2]),
         }
+    }
+
+    fn render_details_tab(&self, frame: &mut Frame<'_>, _sub: Rect, area: Rect) {
+        let t = theme();
+        let Some(server) = self
+            .servers
+            .iter()
+            .find(|server| server.id.0 == self.manage.server_id)
+        else {
+            return;
+        };
+        let health = Health::from_systemd(self.server_status(&server.id.0));
+        let join = server
+            .ports
+            .first()
+            .map(|port| {
+                let host = self
+                    .admin_web
+                    .public_ip
+                    .clone()
+                    .unwrap_or_else(|| "<vps-ip>".to_string());
+                format!("{host}:{}", port.port)
+            })
+            .unwrap_or_else(|| "no public port".to_string());
+        let ports = server
+            .ports
+            .iter()
+            .map(|port| format!("{}/{}", port.port, super::protocol_label(port.protocol)))
+            .collect::<Vec<_>>()
+            .join("  ");
+        let kv = |label: &'static str, value: String| {
+            Line::from(vec![
+                Span::styled(format!("{label:<10}"), t.muted()),
+                Span::raw(value),
+            ])
+        };
+        let mut lines = vec![
+            Line::raw(""),
+            kv("Join", join),
+            kv("Ports", ports),
+            kv("Folder", server.install_path.display().to_string()),
+            kv("Service", server.service_name.clone()),
+        ];
+        let running = matches!(health, Health::Online | Health::Starting);
+        let actions: [(&str, &str, bool); 5] = [
+            ("s", "start", !running),
+            ("x", "stop", running),
+            ("R", "restart", running),
+            ("b", "backup", true),
+            ("y", "copy address", true),
+        ];
+        let mut spans = Vec::new();
+        for (index, (key, label, enabled)) in actions.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::raw("   "));
+            }
+            let (key_style, label_style) = if *enabled {
+                (t.key(), t.muted())
+            } else {
+                (t.faint(), t.faint())
+            };
+            spans.push(Span::styled(*key, key_style));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(*label, label_style));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::from(spans));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled("recent", t.muted())));
+        let room = (area.height as usize).saturating_sub(lines.len());
+        let width = area.width.saturating_sub(1) as usize;
+        let recent = &self.manage.console.lines;
+        for line in recent.iter().skip(recent.len().saturating_sub(room.min(8))) {
+            let style = match line.kind {
+                LineKind::Warn => t.level(Level::Warn),
+                LineKind::Error => t.level(Level::Error),
+                LineKind::Join => t.level(Level::Ok),
+                _ => Style::default(),
+            };
+            let text: String = line.text.chars().take(width).collect();
+            lines.push(Line::from(Span::styled(text, style)));
+        }
+        frame.render_widget(Paragraph::new(Text::from(lines)), area);
     }
 
     fn render_config_tab(&self, frame: &mut Frame<'_>, sub: Rect, area: Rect) {
