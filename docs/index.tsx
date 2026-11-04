@@ -13,6 +13,7 @@ import {
   IconUserPlus,
 } from "./_components/icons"
 import "./_components/landing.css"
+import { TuiDemo } from "./_components/tui-demo"
 
 export const sidebar = false
 export const toc = false
@@ -84,6 +85,14 @@ export default function Page() {
               No Docker
             </li>
           </ul>
+        </section>
+
+        <section class="hl-block" aria-label="Hostable terminal app demo">
+          <div class="hl-head">
+            <h2>In your terminal</h2>
+            <p class="hl-hint">The real app, captured as text and replayed.</p>
+          </div>
+          <TuiDemo />
         </section>
 
         <section class="hl-block">

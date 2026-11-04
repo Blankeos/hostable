@@ -149,6 +149,11 @@
   color: var(--muted-foreground);
 }
 
+.hl-head {
+  display: grid;
+  gap: var(--hl-space-1);
+}
+
 .hl-block h3 {
   font-size: 16px;
   font-weight: 600;
@@ -238,6 +243,159 @@
   border-top: 1px solid var(--border);
   color: var(--muted-foreground);
   font-size: 14px;
+}
+
+/* Terminal demo. Palette slots follow crates/hostable-tui/src/theme.rs; the TUI never
+   sets a background, so the terminal simply takes the page's colours. */
+.hl-demo {
+  --t-muted: #696d74;
+  --t-faint: #aeb2b8;
+  --t-accent: #c2511f;
+  --t-ok: #1e8a59;
+  --t-warn: #9a6a0c;
+  --t-bad: #c43c3c;
+
+  display: grid;
+  gap: var(--hl-space-3);
+}
+
+.dark .hl-demo {
+  --t-muted: #8d9199;
+  --t-faint: #4a4d53;
+  --t-accent: #e0663a;
+  --t-ok: #4cc38a;
+  --t-warn: #d9a441;
+  --t-bad: #ec6a6a;
+}
+
+.hl-term {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--hl-radius);
+  background: var(--card);
+}
+
+.hl-term-bar {
+  display: flex;
+  gap: 6px;
+  padding: var(--hl-space-2) var(--hl-space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.hl-term-bar span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.hl-term-view {
+  overflow-x: auto;
+  padding: var(--hl-space-3);
+}
+
+.hl-term-screen {
+  position: relative;
+  color: var(--foreground);
+  font: 10.5px/1.2 ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+  font-variant-ligatures: none;
+  white-space: pre;
+}
+
+.hl-term-line {
+  height: 1.2em;
+}
+
+.hl-term-cell {
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+}
+
+.hl-term-cursor {
+  position: absolute;
+  width: 1ch;
+  height: 1.2em;
+  background: var(--foreground);
+  opacity: 0.55;
+}
+
+.t-muted { color: var(--t-muted); }
+.t-faint { color: var(--t-faint); }
+.t-accent { color: var(--t-accent); }
+.t-ok { color: var(--t-ok); }
+.t-warn { color: var(--t-warn); }
+.t-bad { color: var(--t-bad); }
+.t-b { font-weight: 700; }
+.t-i { font-style: italic; }
+.t-u { text-decoration: underline; text-underline-offset: 2px; }
+.t-r { color: var(--card); background: var(--foreground); }
+
+.hl-demo-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--hl-space-1);
+}
+
+.hl-demo-steps {
+  display: flex;
+  flex: 1;
+  gap: var(--hl-space-2);
+  margin-right: var(--hl-space-2);
+}
+
+.hl .hl-demo-steps button {
+  flex: 1;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.hl-demo-steps button::before,
+.hl-demo-steps button span {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.hl-demo-steps button span {
+  margin-top: -2px;
+  background: var(--muted-foreground);
+  transform-origin: left;
+}
+
+.hl .hl-demo-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.hl .hl-demo-icon:hover {
+  color: var(--foreground);
+  background: var(--muted);
+  opacity: 1;
+}
+
+.hl-demo-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hl-demo-icon svg .fill {
+  fill: currentColor;
 }
 
 @media (max-width: 560px) {
