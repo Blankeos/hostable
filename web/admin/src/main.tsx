@@ -1,4 +1,14 @@
-import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createResource,
+  createSignal,
+  onCleanup,
+  untrack,
+  type Signal,
+} from "solid-js";
+import { createStore, reconcile, unwrap } from "solid-js/store";
 import { render } from "solid-js/web";
 import "./styles.css";
 import {
@@ -37,6 +47,22 @@ type Overview = {
   mods_count: number | null;
   mods_kind: "mod" | "plugin" | null;
 };
+
+// Polling returns fresh objects every time. Reconciling by id keeps the same rows
+// in the DOM and only updates what changed, so cards do not flash or reset.
+function createServerSignal<T>(initial: T): Signal<T> {
+  const [store, setStore] = createStore<{ value: T }>({ value: initial });
+  return [
+    () => store.value,
+    (next: unknown) => {
+      const resolved =
+        typeof next === "function" ? (next as (prev: T) => T)(untrack(() => unwrap(store.value))) : (next as T);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setStore("value", reconcile(resolved as any, { key: "id" }));
+      return store.value;
+    },
+  ] as Signal<T>;
+}
 
 type ServerView = ServerRecord & {
   status: string;
@@ -165,7 +191,7 @@ function App() {
   const [me, { refetch: refetchMe }] = createResource(fetchMe);
   const [servers, { refetch }] = createResource(
     () => me()?.authenticated,
-    async (authenticated) => {
+    async (authenticated): Promise<ServerView[]> => {
       if (!authenticated) {
         setLastChecked(null);
         return [];
@@ -174,6 +200,7 @@ function App() {
       setLastChecked(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
       return views;
     },
+    { storage: createServerSignal },
   );
   const [storage, { refetch: refetchStorage }] = createResource(
     () => me()?.authenticated,
@@ -313,7 +340,7 @@ function App() {
       <main class="page">
         <div class="page-head">
           <h1>Servers</h1>
-          <Show when={!servers.loading && (servers()?.length ?? 0) > 0}>
+          <Show when={servers.state === "ready" || servers.state === "refreshing"}>
             <p class="muted">{summary(servers() ?? [])}</p>
           </Show>
         </div>
@@ -347,7 +374,10 @@ function App() {
           </p>
         </Show>
 
-        <Show when={!servers.loading} fallback={<p class="muted">Loading servers...</p>}>
+        <Show
+          when={servers.state === "ready" || servers.state === "refreshing" || servers.state === "errored"}
+          fallback={<p class="muted">Loading servers...</p>}
+        >
           <div class="list">
             <For
               each={servers() ?? []}
