@@ -149,11 +149,6 @@
   color: var(--muted-foreground);
 }
 
-.hl-head {
-  display: grid;
-  gap: var(--hl-space-1);
-}
-
 .hl-block h3 {
   font-size: 16px;
   font-weight: 600;
@@ -169,11 +164,7 @@
   display: grid;
   grid-template-columns: 32px 1fr;
   gap: var(--hl-space-3);
-  align-items: start;
-}
-
-.hl-steps p {
-  color: var(--muted-foreground);
+  align-items: center;
 }
 
 .hl-tile {
