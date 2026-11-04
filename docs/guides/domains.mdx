@@ -1,0 +1,16 @@
+---
+title: Domains
+description: Use a domain name instead of an IP address.
+---
+
+You usually don't need to set up the domain on the VPS. Point it to the VPS IP in your DNS provider.
+
+| Type | Name | Value |
+| --- | --- | --- |
+| `A` | `play` | your VPS IPv4 |
+
+Players then join `play.example.com`. If the server uses a port other than the game default, add it: `play.example.com:25566`.
+
+## Cloudflare
+
+Turn the proxy **off** (grey cloud). Cloudflare's proxy only carries web traffic, not game traffic.

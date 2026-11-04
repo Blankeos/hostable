@@ -45,6 +45,7 @@
         { "label": "Console, players and mods", "path": "/guides/manage" },
         { "label": "Updating a server", "path": "/guides/updating" },
         { "label": "Small VPS: RAM, swap, disk", "path": "/guides/small-vps" },
+        { "label": "Domains", "path": "/guides/domains" },
         { "label": "Web admin", "path": "/guides/web-admin" }
       ]
     },
