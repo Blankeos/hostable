@@ -1,8 +1,12 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Blankeos/hostable/main/assets/logo.png" alt="hostable" width="160">
+  <img src="https://raw.githubusercontent.com/Blankeos/hostable/main/assets/logo.svg" alt="hostable" width="96">
 </p>
 
+<h1 align="center">Hostable</h1>
+
 <p align="center">Game servers for you and your friends, in minutes.</p>
+
+<p align="center"><a href="https://hostable.pages.dev">Website</a> · <a href="https://hostable.pages.dev/introduction">Docs</a></p>
 
 `hostable` sets up and runs Minecraft, Palworld and ARK servers on your own VPS. You pay only for the VPS, there are no platform fees, and there is no Docker. It opens the firewall port, writes the systemd service, keeps backups and gives you a terminal UI, a CLI and an optional web page to manage it all.
 
@@ -12,13 +16,13 @@
 
 ## Install
 
-SSH into a fresh Debian or Ubuntu VPS (x86_64 or arm64) and run:
+SSH into a fresh Debian or Ubuntu VPS (x86_64 or arm64) and run the install command:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/blankeos/hostable/main/install.sh | sh
 ```
 
-Then open the TUI:
+Then run Hostable:
 
 ```sh
 sudo hostable
@@ -40,6 +44,7 @@ sudo hostable console <name> "say hi"
 sudo hostable logs <name>
 sudo hostable doctor <name>         # diagnose a broken server
 sudo hostable preflight             # RAM, disk, ports, swap
+sudo hostable upgrade               # update Hostable itself
 ```
 
 `stop`, `restart` and `update` refuse to run while players are online. Pass `--force` to override.
@@ -49,6 +54,8 @@ sudo hostable preflight             # RAM, disk, ports, swap
 | Minecraft | Vanilla, Paper, Fabric, Modrinth modpacks, import existing folders |
 | Palworld | Dedicated server through SteamCMD, co-op save import |
 | ARK: Survival Evolved | Dedicated server through SteamCMD (one instance per host) |
+
+Players can join with a domain: point an `A` record to the VPS IP in your DNS provider. See [Domains](https://hostable.pages.dev/guides/domains).
 
 ## Web admin
 
