@@ -1,4 +1,5 @@
-/* Spacing scale: 4 8 12 16 24 32 48 64. Everything below uses these. */
+/* Spacing scale: 4 8 12 16 24 32 48 64. Everything below uses these.
+   Flat colours only: no gradients, no glows. */
 .hl {
   --hl-space-1: 4px;
   --hl-space-2: 8px;
@@ -8,12 +9,21 @@
   --hl-space-6: 32px;
   --hl-space-7: 48px;
   --hl-space-8: 64px;
-  --hl-radius: 6px;
+  --hl-radius: 4px;
+  --hl-accent: #c4481a;
+  --hl-accent-edge: #8f3411;
+  --hl-accent-text: #c4481a;
+  --hl-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
 
   min-height: 100vh;
+  overflow-x: clip;
   color: var(--foreground);
   background: var(--background);
   font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.dark .hl {
+  --hl-accent-text: #e0663a;
 }
 
 .hl h1,
@@ -42,8 +52,18 @@
 }
 
 .hl code {
-  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
-  font-size: 0.875em;
+  font-family: var(--hl-mono);
+}
+
+.hl button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.hl button:focus-visible,
+.hl a:focus-visible {
+  outline: 2px solid var(--hl-accent);
+  outline-offset: 2px;
 }
 
 .hl-wrap {
@@ -51,27 +71,112 @@
   margin: 0 auto;
 }
 
+/* Hero */
 .hl-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: var(--hl-space-5);
-  padding: var(--hl-space-8) 0 var(--hl-space-7);
+  width: min(1040px, 100%);
+  margin: 0 auto;
+  padding: var(--hl-space-7) var(--hl-space-5);
+  text-align: center;
+}
+
+.hl-island {
+  width: 184px;
+  height: auto;
+  overflow: visible;
+  animation: hl-bob 6s ease-in-out 2.2s infinite;
 }
 
 .hl-hero h1 {
-  font-size: clamp(32px, 6vw, 44px);
-  font-weight: 650;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
+  max-width: 760px;
+  font-size: clamp(32px, 5.4vw, 52px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
 }
 
 .hl-lede {
-  max-width: 600px;
+  margin-top: calc(var(--hl-space-2) * -1);
   color: var(--muted-foreground);
   font-size: 18px;
 }
 
-.hl-command {
+/* Voxels: blocks drop in bottom-up, then the island floats. */
+.hl-vx-cube {
+  animation: hl-drop 520ms cubic-bezier(0.2, 1.5, 0.4, 1) both;
+  animation-delay: calc(var(--i) * 28ms);
+}
+
+.hl-vx-led {
+  animation: hl-led 1.4s steps(1) infinite;
+}
+
+.hl-vx-eye {
+  animation: hl-eye 5s steps(1) 2s infinite;
+}
+
+.hl-floaters {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hl-float {
+  position: absolute;
+  height: auto;
+  overflow: visible;
+}
+
+.hl-float-1 { top: 22%; left: 4%; width: 48px; animation: hl-bob 5s ease-in-out infinite; }
+.hl-float-2 { top: 12%; right: 7%; width: 36px; animation: hl-bob 6s ease-in-out -2s infinite; }
+.hl-float-3 { top: 58%; left: 10%; width: 28px; animation: hl-bob 7s ease-in-out -4s infinite; }
+.hl-float-4 { top: 48%; right: 3%; width: 40px; animation: hl-bob 5.5s ease-in-out -1s infinite; }
+
+/* Install: two numbered steps, each a command with a copy button. */
+.hl-install {
+  display: grid;
+  gap: var(--hl-space-4);
+  width: 100%;
+  max-width: 800px;
+  margin-top: var(--hl-space-2);
+  text-align: left;
+}
+
+.hl-install li {
+  display: grid;
+  gap: var(--hl-space-2);
+}
+
+.hl-install h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--hl-space-2);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.hl-where {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+.hl-num {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 2px;
+  color: #fff;
+  background: var(--hl-accent);
+  font: 600 12px/1 var(--hl-mono);
+}
+
+.hl-cmd {
   display: flex;
   align-items: center;
   gap: var(--hl-space-3);
@@ -81,51 +186,72 @@
   background: var(--muted);
 }
 
-.hl-command code {
+.hl-cmd code {
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  white-space: nowrap;
   font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.hl button {
+.hl-prompt {
+  margin-right: 1ch;
+  color: var(--muted-foreground);
+  user-select: none;
+}
+
+.hl-ch {
+  animation:
+    hl-caret-on var(--step) steps(1) calc(var(--t0) + var(--i) * var(--step)),
+    hl-type 1ms calc(var(--t0) + (var(--i) + 1) * var(--step)) both;
+}
+
+.hl-caret {
+  display: inline-block;
+  width: 1ch;
+  height: 1.3em;
+  vertical-align: text-bottom;
+  background: var(--foreground);
+  opacity: 0;
+  animation: hl-caret 1.1s steps(1) calc(var(--t0) + var(--i) * var(--step)) infinite;
+}
+
+.hl .hl-copy {
   flex: none;
+  min-width: 68px;
   height: 32px;
   padding: 0 var(--hl-space-3);
-  border: 1px solid var(--primary);
+  border: 0;
+  border-bottom: 3px solid var(--hl-accent-edge);
   border-radius: var(--hl-radius);
-  color: var(--primary-foreground);
-  background: var(--primary);
-  font: inherit;
-  font-size: 14px;
+  color: #fff;
+  background: var(--hl-accent);
+  font: 500 14px/1 ui-sans-serif, system-ui, sans-serif;
   cursor: pointer;
+  transition: transform 120ms ease;
 }
 
-.hl button:hover {
-  opacity: 0.88;
+.hl .hl-copy:hover {
+  transform: translateY(-1px);
 }
 
-.hl button:focus-visible,
-.hl a:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-
-.hl-hint {
-  color: var(--muted-foreground);
-  font-size: 14px;
+.hl .hl-copy:active {
+  border-bottom-width: 1px;
+  transform: translateY(2px);
 }
 
 .hl-facts {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: var(--hl-space-2) var(--hl-space-5);
   color: var(--muted-foreground);
   font-size: 14px;
 }
 
-.hl-facts li {
+.hl-facts li,
+.hl-docs {
   display: flex;
   align-items: center;
   gap: var(--hl-space-2);
@@ -136,104 +262,245 @@
   height: 16px;
 }
 
-.hl-block {
-  display: grid;
-  gap: var(--hl-space-4);
-  padding: var(--hl-space-6) 0;
-  border-top: 1px solid var(--border);
+.hl .hl-docs {
+  color: var(--hl-accent-text);
+  font-weight: 500;
 }
 
-.hl-block h2 {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--muted-foreground);
+.hl-docs svg {
+  transition: transform 160ms ease;
+}
+
+.hl-docs:hover svg {
+  transform: translateX(3px);
+}
+
+/* Sections */
+.hl-block {
+  display: grid;
+  gap: var(--hl-space-6);
+  padding: var(--hl-space-6) 0 var(--hl-space-7);
+}
+
+.hl-block > h2 {
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+/* A single orange pixel above each heading. */
+.hl-block > h2::before {
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin: 0 auto var(--hl-space-3);
+  background: var(--hl-accent);
+  content: "";
 }
 
 .hl-block h3 {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.4;
 }
 
+/* How it works: four blocks in a row, dropped in one after another. */
 .hl-steps {
   display: grid;
-  gap: var(--hl-space-5);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--hl-space-4);
 }
 
 .hl-steps li {
+  position: relative;
   display: grid;
-  grid-template-columns: 32px 1fr;
+  justify-items: center;
   gap: var(--hl-space-3);
-  align-items: center;
 }
 
-.hl-tile {
+.hl-steps li:not(:last-child)::after {
+  position: absolute;
+  top: 28px;
+  left: calc(50% + 40px);
+  right: calc(-50% + 40px - var(--hl-space-4));
+  border-top: 2px dashed var(--border);
+  content: "";
+}
+
+.hl-block-tile {
   display: grid;
-  flex: none;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  overflow: hidden;
+  width: 56px;
+  height: 56px;
   border: 1px solid var(--border);
+  border-bottom-width: 4px;
   border-radius: var(--hl-radius);
-  color: var(--muted-foreground);
-  background: var(--muted);
-}
-
-.hl-tile svg {
-  width: 18px;
-  height: 18px;
-}
-
-.hl-tile img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.hl-game-name {
-  display: flex;
-  align-items: center;
-  gap: var(--hl-space-3);
-}
-
-.hl-game-name .hl-tile {
-  width: 40px;
-  height: 40px;
-}
-
-.hl-games {
-  border: 1px solid var(--border);
-  border-radius: var(--hl-radius);
+  color: var(--foreground);
   background: var(--card);
+  transition: transform 180ms cubic-bezier(0.2, 1.5, 0.4, 1), color 180ms ease, border-color 180ms ease;
+}
+
+.hl-block-tile svg {
+  width: 24px;
+  height: 24px;
+}
+
+.hl-steps li:hover .hl-block-tile {
+  color: var(--hl-accent-text);
+  border-color: var(--hl-accent);
+  transform: translateY(-4px);
+}
+
+/* Games */
+.hl-games {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--hl-space-4);
 }
 
 .hl-games li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--hl-space-4);
-  padding: var(--hl-space-4);
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: var(--hl-space-2);
+  padding: var(--hl-space-5) var(--hl-space-4);
+  border: 1px solid var(--border);
+  border-bottom-width: 4px;
+  border-radius: 6px;
+  background: var(--card);
+  text-align: center;
+  transition: transform 180ms cubic-bezier(0.2, 1.5, 0.4, 1), border-color 180ms ease;
 }
 
-.hl-games li + li {
-  border-top: 1px solid var(--border);
+.hl-games li:hover {
+  border-color: var(--hl-accent);
+  transform: translateY(-4px);
 }
 
-.hl-games .hl-detail {
+.hl-games img {
+  width: 56px;
+  height: 56px;
+  margin-bottom: var(--hl-space-2);
+  border-radius: var(--hl-radius);
+  object-fit: cover;
+}
+
+.hl-games li:hover img {
+  animation: hl-hop 420ms cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+
+.hl-games p {
   color: var(--muted-foreground);
-  font-size: 14px;
-  text-align: right;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
+/* Footer: text, then a strip of pixel ground. */
 .hl-foot {
+  margin-top: var(--hl-space-6);
+}
+
+.hl-foot-row {
   display: flex;
-  justify-content: space-between;
-  gap: var(--hl-space-4);
-  padding: var(--hl-space-6) 0 var(--hl-space-7);
-  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--hl-space-2) var(--hl-space-5);
+  padding: var(--hl-space-5) 0;
   color: var(--muted-foreground);
   font-size: 14px;
+}
+
+.hl-ground {
+  display: block;
+}
+
+/* Scroll reveal. Hidden states only exist once JS runs and motion is allowed. */
+@media (prefers-reduced-motion: no-preference) {
+  .hl-js .hl-reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 600ms ease, transform 600ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .hl-js .hl-reveal.is-in {
+    opacity: 1;
+    transform: none;
+  }
+
+  .hl-js .hl-reveal:not(.is-in) :is(.hl-steps, .hl-games) > li {
+    opacity: 0;
+  }
+
+  .hl-js .hl-reveal.is-in :is(.hl-steps, .hl-games) > li {
+    animation: hl-drop 560ms cubic-bezier(0.2, 1.5, 0.4, 1) backwards;
+    animation-delay: calc(200ms + var(--i) * 120ms);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hl *,
+  .hl *::before,
+  .hl *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes hl-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-40px);
+  }
+}
+
+@keyframes hl-bob {
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes hl-hop {
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes hl-led {
+  50% {
+    fill: #2e6b3c;
+  }
+}
+
+@keyframes hl-eye {
+  0% {
+    fill: #1d2a17;
+  }
+  96% {
+    fill: #5a983c;
+  }
+}
+
+@keyframes hl-type {
+  from {
+    color: transparent;
+  }
+}
+
+@keyframes hl-caret-on {
+  from,
+  to {
+    background: var(--foreground);
+  }
+}
+
+@keyframes hl-caret {
+  0% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 0;
+  }
 }
 
 /* Terminal demo. Palette slots follow crates/hostable-tui/src/theme.rs; the TUI never
@@ -276,7 +543,6 @@
 .hl-term-bar span {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
   background: var(--border);
 }
 
@@ -389,18 +655,62 @@
   fill: currentColor;
 }
 
-@media (max-width: 560px) {
-  .hl-games li {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--hl-space-1);
+
+@media (max-width: 860px) {
+  .hl-float-3,
+  .hl-float-4 {
+    display: none;
   }
 
-  .hl-games .hl-detail {
+  .hl-float-1 { top: 64px; left: 8%; width: 36px; }
+  .hl-float-2 { top: 40px; right: 8%; width: 28px; }
+}
+
+@media (max-width: 560px) {
+  .hl-hero {
+    padding-top: var(--hl-space-6);
+  }
+
+  .hl-island {
+    width: 152px;
+  }
+
+  .hl-steps {
+    gap: var(--hl-space-2);
+  }
+
+  .hl-steps li:not(:last-child)::after {
+    left: calc(50% + 32px);
+    right: calc(-50% + 32px - var(--hl-space-2));
+  }
+
+  .hl-block-tile {
+    width: 48px;
+    height: 48px;
+  }
+
+  .hl-steps li:not(:last-child)::after {
+    top: 24px;
+  }
+
+  .hl-games {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--hl-space-3);
+  }
+
+  .hl-games li {
+    grid-template-columns: 48px minmax(0, 1fr);
+    justify-items: start;
+    column-gap: var(--hl-space-4);
+    row-gap: 0;
+    padding: var(--hl-space-4);
     text-align: left;
   }
 
-  .hl-hero {
-    padding-top: var(--hl-space-7);
+  .hl-games img {
+    grid-row: span 2;
+    width: 48px;
+    height: 48px;
+    margin: 0;
   }
 }
