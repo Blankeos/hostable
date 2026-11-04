@@ -270,6 +270,8 @@ pub struct ModsResponse {
     pub game_version: Option<String>,
     pub loader: Option<&'static str>,
     pub items: Vec<InstalledMod>,
+    /// The modpack the server was built from, when one can be found.
+    pub modpack: Option<admin::ModpackInfo>,
 }
 
 pub async fn list_mods(
@@ -281,10 +283,14 @@ pub async fn list_mods(
     let response = blocking(move || {
         let kind = server_type(&server);
         let dir = admin::extensions_dir(&server.install_path, &kind);
-        let items = match &dir {
+        let mut items = match &dir {
             Some(dir) => admin::list_mods(&server.install_path, dir)?,
             None => Vec::new(),
         };
+        let modpack = admin::detect_modpack(&server.install_path);
+        if let Some(pack) = &modpack {
+            admin::mark_pack_mods(&mut items, pack);
+        }
         Ok(ModsResponse {
             kind: dir.as_ref().map(|_| admin::extension_noun(&kind)),
             loader: loader_for(&kind),
@@ -297,6 +303,7 @@ pub async fn list_mods(
             ),
             server_type: kind,
             items,
+            modpack,
         })
     })
     .await?;

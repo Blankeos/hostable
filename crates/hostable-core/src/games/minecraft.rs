@@ -196,6 +196,11 @@ impl GameAdapter for MinecraftAdapter {
         for (relative, format) in [
             ("server.properties", ConfigFormat::Properties),
             ("eula.txt", ConfigFormat::Properties),
+            ("start.sh", ConfigFormat::Text),
+            ("ops.json", ConfigFormat::Json),
+            ("whitelist.json", ConfigFormat::Json),
+            ("banned-players.json", ConfigFormat::Json),
+            ("banned-ips.json", ConfigFormat::Json),
             ("hostable.minecraft.mods.json", ConfigFormat::Json),
         ] {
             let path = root.join(relative);

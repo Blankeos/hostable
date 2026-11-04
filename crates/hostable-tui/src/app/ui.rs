@@ -202,6 +202,7 @@ impl App {
                     ("n", "new"),
                     ("c", "connect"),
                     ("r", "refresh"),
+                    ("⇄", "settings"),
                     ("q", "quit"),
                 ],
                 Screen::Settings => vec![
@@ -210,6 +211,7 @@ impl App {
                     ("w", "web admin"),
                     ("d", "domain"),
                     ("p", "password"),
+                    ("⇄", "servers"),
                     ("esc", "back"),
                 ],
             },
@@ -231,7 +233,6 @@ impl App {
                 ("enter", "use"),
                 ("esc", "back"),
             ],
-            Mode::EditConfig => vec![("f2", "save"), ("tab", "next file"), ("esc", "close")],
         }
     }
 
@@ -710,7 +711,7 @@ impl App {
                     ("c", "live console: logs and commands"),
                     ("p", "players: whitelist, ops, kick"),
                     ("m", "mods and modpacks (Modrinth)"),
-                    ("f", "edit config files"),
+                    ("f", "config files, opened in vi"),
                     ("y", "copy the join address"),
                 ],
             ),
@@ -1299,6 +1300,73 @@ mod tests {
             "POST /api/servers/a/mods/remove HTTP/1.1"
         );
         assert!(app.manage.mods.restart_needed);
+    }
+
+    #[test]
+    fn mods_tab_tells_pack_mods_from_added_ones() {
+        let (url, requests) = fake_daemon(vec![(
+            "200 OK",
+            r#"{"kind":"mod","server_type":"fabric","game_version":"1.21.1","loader":"fabric",
+            "modpack":{"name":"COBBLEVERSE","version":"1.7.42","files":["cobblemon.jar"]},
+            "items":[
+            {"filename":"cobblemon.jar","enabled":true,"size":1024,"title":null,"version":null,"project_id":null,"in_pack":true},
+            {"filename":"mine.jar","enabled":true,"size":1024,"title":null,"version":null,"project_id":null,"in_pack":false}]}"#,
+        )]);
+        let mut app = fixture();
+        app.daemon_url = url;
+        app.mode = Mode::ServerDetail;
+        app.handle_event(press(KeyCode::Char('m')));
+        requests.recv().unwrap();
+        let screen = text(&render(&mut app, 100, 24));
+        for expected in [
+            "COBBLEVERSE 1.7.42",
+            "1 in pack",
+            "1 added",
+            "cobblemon.jar",
+            "mine.jar",
+        ] {
+            assert!(screen.contains(expected), "missing {expected:?}\n{screen}");
+        }
+        app.handle_event(press(KeyCode::Char('p')));
+        let screen = text(&render(&mut app, 100, 24));
+        assert!(screen.contains("showing pack"), "{screen}");
+        assert!(
+            screen.contains("cobblemon.jar") && !screen.contains("mine.jar"),
+            "{screen}"
+        );
+        app.handle_event(press(KeyCode::Char('p')));
+        let screen = text(&render(&mut app, 100, 24));
+        assert!(
+            screen.contains("mine.jar") && !screen.contains("cobblemon.jar"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn config_tab_lists_files_and_hands_the_chosen_one_to_the_editor() {
+        let (url, requests) = fake_daemon(vec![(
+            "200 OK",
+            r#"{"title":"Minecraft config","files":[
+            {"path":"/srv/a/server.properties","format":"properties","contents":"motd=hi\n"},
+            {"path":"/srv/a/hostable.minecraft.mods.json","format":"json","contents":"{}"},
+            {"path":"/srv/a/ops.json","format":"json","contents":"[]"}]}"#,
+        )]);
+        let mut app = fixture();
+        app.daemon_url = url;
+        app.mode = Mode::ServerDetail;
+        app.handle_event(press(KeyCode::Char('f')));
+        requests.recv().unwrap();
+        let screen = text(&render(&mut app, 100, 24));
+        assert!(screen.contains("server.properties"), "{screen}");
+        assert!(screen.contains("Operators"), "{screen}");
+        assert!(!screen.contains("hostable.minecraft.mods.json"), "{screen}");
+        assert!(screen.contains("enter open in vi"), "{screen}");
+        app.handle_event(press(KeyCode::Down));
+        app.handle_event(press(KeyCode::Enter));
+        assert_eq!(
+            app.take_pending_edit(),
+            Some(std::path::PathBuf::from("/srv/a/ops.json"))
+        );
     }
 
     #[test]
