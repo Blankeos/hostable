@@ -584,6 +584,36 @@ impl App {
         };
     }
 
+    /// The mouse wheel only matters inside a server's tabs; elsewhere the terminal keeps it
+    /// (so text can still be selected and copied).
+    pub fn wants_mouse(&self) -> bool {
+        self.mode == Mode::Manage
+    }
+
+    /// Wheel over a server tab: scrolls the log, or moves through a list.
+    pub fn handle_wheel(&mut self, up: bool) {
+        if self.mode != Mode::Manage || self.confirm.is_some() {
+            return;
+        }
+        const STEP: usize = 3;
+        match self.manage.tab {
+            ManageTab::Console => {
+                let console = &mut self.manage.console;
+                if up {
+                    console.scroll = (console.scroll + STEP).min(console.lines.len());
+                } else {
+                    console.scroll = console.scroll.saturating_sub(STEP);
+                }
+            }
+            _ => {
+                let key = if up { KeyCode::Up } else { KeyCode::Down };
+                for _ in 0..STEP {
+                    self.handle_manage_key(key);
+                }
+            }
+        }
+    }
+
     pub fn take_pending_edit(&mut self) -> Option<std::path::PathBuf> {
         self.pending_edit.take()
     }

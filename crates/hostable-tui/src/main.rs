@@ -6,7 +6,7 @@ mod upgrade;
 use anyhow::Result;
 use app::App;
 use clap::Parser;
-use crossterm::event::{self, Event};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, MouseEventKind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -38,6 +38,7 @@ fn main() -> Result<()> {
     // `init` also installs a panic hook, so a crash restores the terminal.
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, args.daemon_url, args.operator_token);
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
 }
@@ -53,17 +54,32 @@ fn run(
     app.refresh_servers();
     app.refresh_public_ip();
 
+    let mut mouse = false;
     loop {
         if let Some(path) = app.take_pending_edit() {
+            let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+            mouse = false;
             edit_file(terminal, &mut app, &path);
+        }
+        if app.wants_mouse() != mouse {
+            mouse = app.wants_mouse();
+            let _ = if mouse {
+                crossterm::execute!(std::io::stdout(), EnableMouseCapture)
+            } else {
+                crossterm::execute!(std::io::stdout(), DisableMouseCapture)
+            };
         }
         terminal.draw(|frame| app.draw(frame))?;
 
         if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()?
-                && app.handle_event(key)
-            {
-                break;
+            match event::read()? {
+                Event::Key(key) if app.handle_event(key) => break,
+                Event::Mouse(event) => match event.kind {
+                    MouseEventKind::ScrollUp => app.handle_wheel(true),
+                    MouseEventKind::ScrollDown => app.handle_wheel(false),
+                    _ => {}
+                },
+                _ => {}
             }
         } else {
             app.tick();

@@ -1303,6 +1303,30 @@ mod tests {
     }
 
     #[test]
+    fn mouse_wheel_scrolls_the_console_and_lists() {
+        let mut app = fixture();
+        assert!(!app.wants_mouse());
+        app.mode = Mode::Manage;
+        app.manage.game = Some(hostable_core::GameKind::Minecraft);
+        app.manage.tab = crate::app::manage::ManageTab::Console;
+        assert!(app.wants_mouse());
+        for index in 0..20 {
+            app.manage
+                .console
+                .lines
+                .push(crate::app::manage::ConsoleLine {
+                    kind: crate::app::manage::LineKind::Log,
+                    text: format!("line {index}"),
+                });
+        }
+        app.handle_wheel(true);
+        assert_eq!(app.manage.console.scroll, 3);
+        app.handle_wheel(false);
+        app.handle_wheel(false);
+        assert_eq!(app.manage.console.scroll, 0);
+    }
+
+    #[test]
     fn mods_tab_tells_pack_mods_from_added_ones() {
         let (url, requests) = fake_daemon(vec![(
             "200 OK",
