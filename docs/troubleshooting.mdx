@@ -1,0 +1,52 @@
+---
+title: Troubleshooting
+description: Common problems and the commands that find them.
+---
+
+Start with:
+
+```bash
+sudo hostable doctor <server>
+sudo hostable logs <server> --lines 200
+sudo systemctl status hostabled
+```
+
+## Friends cannot connect
+
+1. `hostable list`: is it `active` and which port?
+2. `sudo ss -ltnup | grep <port>`: is something actually listening?
+3. `sudo ufw status`: the port should be allowed.
+4. Your VPS provider's dashboard firewall: open the same port (UDP for Palworld and ARK, TCP for Minecraft).
+5. Clients and server on different game versions? Update the server.
+
+## "port N is already in use by another process"
+
+Another service holds the port, often an old hand-made unit. `sudo ss -ltnup | grep <port>` shows the owner. Stop and disable it, then start the Hostable one.
+
+## "N player(s) are online"
+
+Intentional. Ask them to leave or add `--force`.
+
+## "cannot reach the server console"
+
+The server is stopped, still starting (Minecraft takes a minute to open RCON) or RCON is off. For imported Minecraft servers, set `enable-rcon=true`, `rcon.port` and `rcon.password` in `server.properties`, restart once, then re-import.
+
+## Palworld setting does nothing
+
+A co-op `WorldOption.sav` overrides the INI. See [Palworld](/games/palworld).
+
+## "Cannot read /etc/hostable/operator-token"
+
+Run with `sudo`.
+
+## SteamCMD fails to start or segfaults
+
+Steam's tools are 32-bit x86. They do not run on ARM VPSes or under Rosetta. Use an x86_64 VPS for Palworld and ARK.
+
+## The VPS froze or the server was killed
+
+That is out-of-memory. `dmesg | grep -i "killed process"` confirms it. See [Small VPS](/guides/small-vps) for swap and sizing.
+
+## Disk is almost full
+
+`sudo hostable disk`, then `sudo hostable disk --clean journal`. Review old server copies it lists under `/home`.

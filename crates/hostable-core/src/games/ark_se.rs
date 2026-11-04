@@ -1,3 +1,4 @@
+use super::{STEAMCMD, owner_or_hostable, slugify};
 use crate::actions::{ActionPlan, HostAction};
 use crate::adapter::{
     ConfigDocument, ConfigFile, ConfigFormat, ConfigPatch, ConsoleCapability, CreateServerInput,
@@ -57,6 +58,9 @@ impl GameAdapter for ArkSurvivalEvolvedAdapter {
                 "non-free".to_string(),
                 "non-free-firmware".to_string(),
             ],
+            min_memory_mb: 6 * 1024,
+            recommended_memory_mb: 8 * 1024,
+            min_disk_mb: 25 * 1024,
         }
     }
 
@@ -74,6 +78,8 @@ impl GameAdapter for ArkSurvivalEvolvedAdapter {
             install_path: path.to_path_buf(),
             server_type: Some(crate::ServerType::ArkSurvivalEvolved),
             confidence: DetectionConfidence::High,
+            ports: self.default_ports(),
+            extra: serde_json::Value::Null,
         })
     }
 
@@ -105,7 +111,7 @@ impl GameAdapter for ArkSurvivalEvolvedAdapter {
             owner: "hostable".to_string(),
         });
         plan.actions.push(HostAction::RunCommand {
-            program: "steamcmd".to_string(),
+            program: STEAMCMD.to_string(),
             args: vec![
                 "+force_install_dir".to_string(),
                 input.install_path.to_string_lossy().into_owned(),
@@ -163,12 +169,22 @@ impl GameAdapter for ArkSurvivalEvolvedAdapter {
         Ok(plan)
     }
 
-    fn plan_import(&self, detected: DetectedServer) -> Result<ActionPlan> {
-        Ok(
-            ActionPlan::new("Import ARK server").push(HostAction::CreateDirectory {
-                path: detected.install_path,
-                owner: "hostable".to_string(),
-            }),
+    fn plan_import(&self, detected: DetectedServer, name: &str) -> Result<ActionPlan> {
+        let script = detected.install_path.join("start.sh");
+        if !script.exists() {
+            return Err(HostableError::InvalidInput(
+                "no start.sh found: Hostable needs the script that launches ShooterGameServer"
+                    .to_string(),
+            ));
+        }
+        super::import_plan(
+            "Import ARK server",
+            name,
+            &format!("Hostable ARK server {name}"),
+            &detected.install_path,
+            &format!("/usr/bin/env bash {}", script.display()),
+            &detected.ports,
+            180,
         )
     }
 
@@ -220,6 +236,24 @@ impl GameAdapter for ArkSurvivalEvolvedAdapter {
     fn console(&self) -> Option<&dyn ConsoleCapability> {
         Some(self)
     }
+
+    fn plan_update(&self, server: &ServerRecord) -> Option<Vec<HostAction>> {
+        Some(vec![HostAction::RunCommand {
+            program: STEAMCMD.to_string(),
+            args: vec![
+                "+force_install_dir".to_string(),
+                server.install_path.to_string_lossy().into_owned(),
+                "+login".to_string(),
+                "anonymous".to_string(),
+                "+app_update".to_string(),
+                "376030".to_string(),
+                "validate".to_string(),
+                "+quit".to_string(),
+            ],
+            user: Some(owner_or_hostable(&server.install_path)),
+            cwd: Some(server.install_path.clone()),
+        }])
+    }
 }
 
 impl ConsoleCapability for ArkSurvivalEvolvedAdapter {
@@ -249,6 +283,20 @@ impl ConsoleCapability for ArkSurvivalEvolvedAdapter {
             accepted: true,
             message,
         })
+    }
+
+    fn save_command(&self) -> &'static str {
+        "SaveWorld"
+    }
+
+    fn online_players(&self, server: &ServerRecord) -> Result<Option<u32>> {
+        let reply = self.send_command(server, "listplayers")?.message;
+        if reply.contains("No Players Connected") {
+            return Ok(Some(0));
+        }
+        Ok(Some(
+            reply.lines().filter(|line| !line.trim().is_empty()).count() as u32,
+        ))
     }
 }
 
@@ -301,36 +349,13 @@ fn render_game_ini() -> String {
 }
 
 fn render_systemd_unit(input: &CreateServerInput) -> String {
-    format!(
-        r#"[Unit]
-Description=Hostable ARK server {name}
-After=network.target
-
-[Service]
-User=hostable
-WorkingDirectory={path}
-ExecStart={path}/start.sh
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-"#,
-        name = input.name,
-        path = input.install_path.display()
+    super::render_unit(
+        &format!("Hostable ARK server {}", input.name),
+        "hostable",
+        &input.install_path,
+        &format!("{}/start.sh", input.install_path.display()),
+        180,
     )
-}
-
-fn slugify(input: &str) -> String {
-    let mut out = String::new();
-    for ch in input.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    out.trim_matches('-').to_string()
 }
 
 fn safe_config_path(root: &Path, requested: &Path) -> Result<PathBuf> {
@@ -427,7 +452,7 @@ mod tests {
         assert!(plan.actions.iter().any(|action| matches!(
             action,
             HostAction::RunCommand { program, args, .. }
-                if program == "steamcmd"
+                if program == "/usr/games/steamcmd"
                     && args.iter().any(|arg| arg == "+app_update")
                     && args.iter().any(|arg| arg == "376030")
                     && args.iter().any(|arg| arg == "validate")

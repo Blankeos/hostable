@@ -1,3 +1,4 @@
+use super::slugify;
 use crate::actions::{ActionPlan, HostAction};
 use crate::adapter::{
     ConfigDocument, ConfigFile, ConfigFormat, ConfigPatch, ConsoleCapability, CreateServerInput,
@@ -43,6 +44,9 @@ impl GameAdapter for MinecraftAdapter {
             ],
             architectures: Vec::new(),
             apt_components: Vec::new(),
+            min_memory_mb: 2 * 1024,
+            recommended_memory_mb: 6 * 1024,
+            min_disk_mb: 3 * 1024,
         }
     }
 
@@ -63,11 +67,37 @@ impl GameAdapter for MinecraftAdapter {
             Some(ServerType::Vanilla)
         };
 
+        let properties_text = fs::read_to_string(&properties).unwrap_or_default();
+        let property = |key: &str| {
+            properties_text.lines().find_map(|line| {
+                let (name, value) = line.split_once('=')?;
+                (name.trim() == key).then(|| value.trim().to_string())
+            })
+        };
+        let game_port = property("server-port")
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(25565);
+        let mut extra = serde_json::Map::new();
+        if property("enable-rcon").as_deref() == Some("true")
+            && let Some(password) = property("rcon.password").filter(|value| !value.is_empty())
+        {
+            extra.insert("rcon_password".to_string(), password.into());
+            if let Some(port) = property("rcon.port").and_then(|value| value.parse::<u16>().ok()) {
+                extra.insert("rcon_port".to_string(), port.into());
+            }
+        }
+
         Ok(DetectedServer {
             kind: GameKind::Minecraft,
             install_path: path.to_path_buf(),
             server_type,
             confidence: DetectionConfidence::High,
+            ports: vec![PortSpec {
+                port: game_port,
+                protocol: Protocol::Tcp,
+                label: "Minecraft server".to_string(),
+            }],
+            extra: serde_json::Value::Object(extra),
         })
     }
 
@@ -95,7 +125,8 @@ impl GameAdapter for MinecraftAdapter {
             path: input.install_path.join("server.properties"),
             contents: render_server_properties(&input),
             owner: "hostable".to_string(),
-            mode: 0o644,
+            // holds the RCON password
+            mode: 0o600,
         });
         plan.actions.push(HostAction::WriteFile {
             path: input.install_path.join("eula.txt"),
@@ -111,7 +142,7 @@ impl GameAdapter for MinecraftAdapter {
         });
         add_modrinth_actions(&mut plan, &input);
         plan.actions.push(HostAction::UfwAllow {
-            port: 25565,
+            port: super::extra_port(&input, "port", 25565),
             protocol: Protocol::Tcp,
         });
         plan.actions.push(HostAction::RenderSystemdUnit {
@@ -124,12 +155,38 @@ impl GameAdapter for MinecraftAdapter {
         Ok(plan)
     }
 
-    fn plan_import(&self, detected: DetectedServer) -> Result<ActionPlan> {
-        Ok(
-            ActionPlan::new("Import Minecraft server").push(HostAction::CreateDirectory {
-                path: detected.install_path,
-                owner: "hostable".to_string(),
-            }),
+    fn plan_import(&self, detected: DetectedServer, name: &str) -> Result<ActionPlan> {
+        let root = &detected.install_path;
+        // Prefer the launch script the owner already uses (it knows their RAM and flags).
+        let script = ["start.sh", "run.sh"]
+            .iter()
+            .map(|file| root.join(file))
+            .find(|path| path.exists());
+        let exec_start = match script {
+            Some(script) => format!("/usr/bin/env bash {}", script.display()),
+            None => {
+                let jar = ["fabric-server-launch.jar", "paper.jar", "server.jar"]
+                    .iter()
+                    .find(|file| root.join(file).exists())
+                    .ok_or_else(|| {
+                        HostableError::InvalidInput(
+                            "no start.sh, run.sh or server jar found in this folder".to_string(),
+                        )
+                    })?;
+                format!(
+                    "/usr/bin/java -Xms1G -Xmx4G -jar {} nogui",
+                    root.join(jar).display()
+                )
+            }
+        };
+        super::import_plan(
+            "Import Minecraft server",
+            name,
+            &format!("Hostable Minecraft server {name}"),
+            root,
+            &exec_start,
+            &detected.ports,
+            120,
         )
     }
 
@@ -232,6 +289,23 @@ impl ConsoleCapability for MinecraftAdapter {
             message,
         })
     }
+
+    fn save_command(&self) -> &'static str {
+        "save-all"
+    }
+
+    fn online_players(&self, server: &ServerRecord) -> Result<Option<u32>> {
+        let reply = self.send_command(server, "list")?.message;
+        Ok(Self::parse_player_count(&reply))
+    }
+}
+
+impl MinecraftAdapter {
+    fn parse_player_count(reply: &str) -> Option<u32> {
+        // "There are 3 of a max of 20 players online: a, b, c"
+        let rest = reply.split("There are ").nth(1)?;
+        rest.split_whitespace().next()?.parse().ok()
+    }
 }
 
 impl ModrinthCapability for MinecraftAdapter {
@@ -245,6 +319,8 @@ impl ModrinthCapability for MinecraftAdapter {
 }
 
 fn render_server_properties(input: &CreateServerInput) -> String {
+    let port = super::extra_port(input, "port", 25565);
+    let rcon_port = super::extra_port(input, "rcon_port", 25575);
     let motd = input
         .extra
         .get("motd")
@@ -278,35 +354,25 @@ fn render_server_properties(input: &CreateServerInput) -> String {
         .unwrap_or(10);
 
     format!(
-        "motd={motd}\nserver-port=25565\nmax-players={max_players}\nview-distance={view_distance}\nsimulation-distance={simulation_distance}\nenable-rcon=true\nrcon.port=25575\nrcon.password={rcon_password}\nonline-mode={online_mode}\n"
+        "motd={motd}\nserver-port={port}\nmax-players={max_players}\nview-distance={view_distance}\nsimulation-distance={simulation_distance}\nenable-rcon=true\nrcon.port={rcon_port}\nrcon.password={rcon_password}\nonline-mode={online_mode}\n"
     )
 }
 
 fn render_start_script(input: &CreateServerInput) -> String {
     let memory_mb = input.memory_mb.unwrap_or(4096);
+    let min_mb = memory_mb.min(1024);
     format!(
-        "#!/usr/bin/env bash\nset -euo pipefail\nexec /usr/bin/java -Xms{memory_mb}M -Xmx{memory_mb}M -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch -jar server.jar nogui\n"
+        "#!/usr/bin/env bash\nset -euo pipefail\nexec /usr/bin/java -Xms{min_mb}M -Xmx{memory_mb}M -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -jar server.jar nogui\n"
     )
 }
 
 fn render_systemd_unit(input: &CreateServerInput) -> String {
-    format!(
-        r#"[Unit]
-Description=Hostable Minecraft server {name}
-After=network.target
-
-[Service]
-User=hostable
-WorkingDirectory={path}
-ExecStart={path}/start.sh
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-"#,
-        name = input.name,
-        path = input.install_path.display()
+    super::render_unit(
+        &format!("Hostable Minecraft server {}", input.name),
+        "hostable",
+        &input.install_path,
+        &format!("{}/start.sh", input.install_path.display()),
+        120,
     )
 }
 
@@ -372,9 +438,9 @@ fn add_server_jar_download(plan: &mut ActionPlan, input: &CreateServerInput) -> 
                 cwd: Some(input.install_path.clone()),
             });
         }
-        ServerType::ArkSurvivalEvolved => {
+        ServerType::ArkSurvivalEvolved | ServerType::Palworld => {
             return Err(HostableError::InvalidInput(
-                "ARK server type cannot be used with Minecraft".to_string(),
+                "this server type cannot be used with Minecraft".to_string(),
             ));
         }
     }
@@ -521,18 +587,6 @@ url = f"https://api.papermc.io/v2/projects/paper/versions/{version}/builds/{buil
 urllib.request.urlretrieve(url, "server.jar")
 "#;
 
-fn slugify(input: &str) -> String {
-    let mut out = String::new();
-    for ch in input.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    out.trim_matches('-').to_string()
-}
-
 fn safe_config_path(root: &Path, requested: &Path) -> Result<PathBuf> {
     if requested
         .components()
@@ -553,6 +607,29 @@ fn safe_config_path(root: &Path, requested: &Path) -> Result<PathBuf> {
         ));
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod player_tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_list_reply() {
+        assert_eq!(
+            MinecraftAdapter::parse_player_count("There are 0 of a max of 20 players online: "),
+            Some(0)
+        );
+        assert_eq!(
+            MinecraftAdapter::parse_player_count(
+                "There are 3 of a max of 20 players online: a, b, c"
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            MinecraftAdapter::parse_player_count("Unknown command"),
+            None
+        );
+    }
 }
 
 #[cfg(test)]

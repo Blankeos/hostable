@@ -1,0 +1,52 @@
+---
+title: Console, players and mods
+description: Tail the log, run commands, manage the whitelist and add mods from the TUI.
+---
+
+Open a server in `sudo hostable` and press a key to enter its workspace. `tab` switches between the three views and `esc` goes back.
+
+| Key | View | Games |
+| --- | --- | --- |
+| `c` | Console | all |
+| `p` | Players | Minecraft |
+| `m` | Mods | Minecraft (Fabric and Paper) |
+
+## Console
+
+The live server log, newest line at the bottom, refreshed every second. Type a command and press `enter`: it runs on the server console (RCON) and the reply appears under it. `↑` and `↓` recall earlier commands, `pgup` scrolls back and `pgdn` returns to the live view.
+
+Warnings are yellow, errors red and players joining or leaving green. Control characters and colour codes are stripped so a player cannot put escape sequences on your screen.
+
+## Players (Minecraft)
+
+Three lists side by side: who is online, the whitelist, and operators. Move between them with `←` `→`.
+
+| Key | Action |
+| --- | --- |
+| `a` | Add a name (or whitelist the selected online player) |
+| `d` | Remove from the whitelist or operator list |
+| `o` | Make the selected player an operator |
+| `K` | Kick the selected online player |
+| `w` | Turn whitelist enforcement on or off |
+
+The whitelist is **off by default** for servers Hostable creates, so friends can join without being listed. Servers in offline mode do not verify names, so a whitelist only matches the name typed, not an account. Operators with unusual names, like terminal escape sequences left in `ops.json`, are flagged so you can spot them.
+
+Changes go through the running server, so start it first.
+
+## Mods (Minecraft)
+
+Press `a` and search Modrinth. Results are filtered to your server's Minecraft version and loader, so anything you install should load. Required dependencies are installed with it and every download is checked against Modrinth's SHA-512 before it is written.
+
+| Key | Action |
+| --- | --- |
+| `a` | Search and install |
+| `space` | Turn a mod on or off (renames it to `.jar.disabled`) |
+| `d` | Delete a mod, after a confirmation |
+| `/` | Filter the list |
+| `R` | Restart to apply changes |
+
+Fabric servers use `mods/`, Paper servers use `plugins/`. Vanilla servers cannot load either. Mods need a restart to take effect, and the list tells you when one is pending.
+
+## The web admin is read only
+
+The browser page shows each server's players, version, mod count and whitelist state, and starts and stops it. Everything above is deliberately terminal only.

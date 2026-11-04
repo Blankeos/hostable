@@ -1,0 +1,68 @@
+{
+  "$schema": "https://raw.githubusercontent.com/blankeos/gittydocs/main/gittydocs.schema.json",
+  "site": {
+    "name": "Hostable",
+    "version": { "cargoToml": "../crates/hostable-tui/Cargo.toml" },
+    "description": "Install and run game servers on your own VPS with one command.",
+    "logo": "/static/logo.svg",
+    "favicon": "/static/logo.svg",
+    "socialBanner": "/static/og.png",
+    "repo": {
+      "owner": "blankeos",
+      "name": "hostable",
+      "ref": "main",
+      "docsPath": "docs"
+    }
+  },
+  "theme": {
+    "preset": "mono"
+  },
+  "nav": [
+    {
+      "label": "Start here",
+      "icon": "rocket",
+      "items": [
+        { "label": "Introduction", "path": "/introduction", "icon": "book" },
+        { "label": "Install", "path": "/install", "icon": "terminal" },
+        { "label": "Your first server", "path": "/first-server", "icon": "rocket" }
+      ]
+    },
+    {
+      "label": "Games",
+      "icon": "package",
+      "items": [
+        { "label": "Minecraft", "path": "/games/minecraft" },
+        { "label": "Palworld", "path": "/games/palworld" },
+        { "label": "ARK: Survival Evolved", "path": "/games/ark" }
+      ]
+    },
+    {
+      "label": "Guides",
+      "icon": "book",
+      "items": [
+        { "label": "Import an existing server", "path": "/guides/import" },
+        { "label": "Backups", "path": "/guides/backups" },
+        { "label": "Console, players and mods", "path": "/guides/manage" },
+        { "label": "Updating a server", "path": "/guides/updating" },
+        { "label": "Small VPS: RAM, swap, disk", "path": "/guides/small-vps" },
+        { "label": "Web admin", "path": "/guides/web-admin" }
+      ]
+    },
+    {
+      "label": "Reference",
+      "icon": "settings",
+      "items": [
+        { "label": "CLI commands", "path": "/cli", "icon": "terminal" },
+        { "label": "Security model", "path": "/security", "icon": "file" },
+        { "label": "Troubleshooting", "path": "/troubleshooting", "icon": "file" }
+      ]
+    }
+  ],
+  "navFooter": [
+    { "label": "GitHub", "path": "https://github.com/blankeos/hostable", "icon": "github" }
+  ],
+  "links": {
+    "github": "https://github.com/blankeos/hostable",
+    "issues": "https://github.com/blankeos/hostable/issues"
+  }
+}

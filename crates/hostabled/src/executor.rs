@@ -127,6 +127,32 @@ impl ActionExecutor {
                 chown(path.to_string_lossy().as_ref(), owner)?;
                 Ok(format!("wrote file: {}", path.display()))
             }
+            HostAction::PatchPalworldSettings {
+                path,
+                seed_from,
+                options,
+                owner,
+            } => {
+                let existing = fs::read_to_string(path).unwrap_or_default();
+                // First boot leaves an empty file; start from the game's defaults then.
+                let base = if hostable_core::palworld::parse_option_settings(&existing).is_some() {
+                    existing
+                } else if let Some(seed) = seed_from {
+                    fs::read_to_string(seed).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let patched = hostable_core::palworld::patch_option_settings(&base, options);
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(path, patched)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+                // Holds the admin password.
+                fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+                chown(path.to_string_lossy().as_ref(), owner)?;
+                Ok(format!("configured {}", path.display()))
+            }
             HostAction::RenderSystemdUnit { name, contents } => {
                 let path = format!("/etc/systemd/system/{name}");
                 fs::write(&path, contents).with_context(|| format!("failed to write {path}"))?;
@@ -149,10 +175,57 @@ impl ActionExecutor {
                     Protocol::Tcp => format!("{port}/tcp"),
                     Protocol::Udp => format!("{port}/udp"),
                 };
+                ensure_ufw_enabled()?;
                 run("ufw", &["allow", &rule])?;
                 Ok(format!("allowed firewall rule: {rule}"))
             }
         }
+    }
+}
+
+/// Turn UFW on, but only after SSH is allowed so we never lock the owner out.
+pub fn ensure_ufw_enabled() -> Result<()> {
+    let status = Command::new("ufw")
+        .arg("status")
+        .output()
+        .context("failed to run ufw status")?;
+    if String::from_utf8_lossy(&status.stdout).contains("Status: active") {
+        return Ok(());
+    }
+    for port in ssh_ports() {
+        run("ufw", &["allow", &format!("{port}/tcp")])?;
+    }
+    run("ufw", &["--force", "enable"])
+}
+
+fn ssh_ports() -> Vec<u16> {
+    let mut ports = Command::new("sshd")
+        .arg("-T")
+        .output()
+        .ok()
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.strip_prefix("port "))
+                .filter_map(|port| port.trim().parse::<u16>().ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if ports.is_empty() {
+        ports.push(22);
+    }
+    ports
+}
+
+pub fn ufw_set_port(port: u16, open: bool) -> Result<()> {
+    let rule = format!("{port}/tcp");
+    if open {
+        ensure_ufw_enabled()?;
+        run("ufw", &["allow", &rule])
+    } else {
+        // Deleting a rule that does not exist is fine.
+        let _ = run("ufw", &["delete", "allow", &rule]);
+        Ok(())
     }
 }
 
@@ -168,25 +241,59 @@ pub fn systemctl_is_active(unit: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub fn journalctl_logs(unit: &str, lines: u16) -> Result<String> {
+/// Last `lines` journal lines, or only the lines after `after` (a cursor from an
+/// earlier call). Returns the text and the cursor to pass next time.
+pub fn journalctl_tail(
+    unit: &str,
+    lines: u16,
+    after: Option<&str>,
+) -> Result<(String, Option<String>)> {
     let line_count = lines.clamp(1, 500).to_string();
+    let mut args = vec![
+        "-u",
+        unit,
+        "--no-pager",
+        "--output",
+        "short-iso",
+        "--show-cursor",
+    ];
+    match after {
+        Some(cursor) if is_safe_cursor(cursor) => {
+            args.push("--after-cursor");
+            args.push(cursor);
+        }
+        _ => {
+            args.push("-n");
+            args.push(&line_count);
+        }
+    }
     let output = Command::new("journalctl")
-        .args([
-            "-u",
-            unit,
-            "-n",
-            &line_count,
-            "--no-pager",
-            "--output",
-            "short-iso",
-        ])
+        .args(&args)
         .output()
         .context("failed to run journalctl")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("journalctl failed: {}", stderr.trim());
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut cursor = None;
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("-- cursor: ") {
+            cursor = Some(value.trim().to_string());
+        } else if !line.starts_with("-- ") {
+            kept.push(line);
+        }
+    }
+    Ok((kept.join("\n"), cursor))
+}
+
+fn is_safe_cursor(cursor: &str) -> bool {
+    !cursor.is_empty()
+        && cursor.len() < 400
+        && cursor
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '=' | ';' | '_' | '-'))
 }
 
 fn chown(path: &str, owner: &str) -> Result<()> {

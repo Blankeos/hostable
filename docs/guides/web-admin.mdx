@@ -1,0 +1,36 @@
+---
+title: Web admin
+description: Let friends start and stop a server from a browser. Off by default.
+---
+
+The web admin is a small page that lists servers and has **Start** and **Stop** buttons, behind a password. It is off until you turn it on.
+
+## Turn it on
+
+<Steps>
+
+### Set a password (on the VPS)
+
+Open `sudo hostable`, go to **Settings** and press `p`. The password is set from the VPS itself on purpose: nobody on the internet can claim it first.
+
+### Enable the web admin
+
+Still in **Settings**, press `w` to enable it. Hostable opens port `8080/tcp` in the firewall. (`d` sets an optional domain shown in the link.)
+
+### Open it
+
+`http://YOUR_IP:8080` and log in. Put it behind HTTPS (Caddy, Cloudflare Tunnel) if you use it over untrusted networks: the password and session cookie travel in clear text on plain HTTP.
+
+</Steps>
+
+Turning it off closes the port again.
+
+## What the internet can and cannot do
+
+| Request from outside the VPS | Result |
+| --- | --- |
+| Anything, while the web admin is off | `403` |
+| Using the operator token | `403`, the token only works on the VPS |
+| Setting the first password | `403` |
+| Wrong password 5 times | `429` for a minute |
+| Right password | A session cookie valid for 7 days |

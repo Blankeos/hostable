@@ -6,3 +6,5 @@
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+.DS_Store
+/target/web-admin/

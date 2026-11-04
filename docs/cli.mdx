@@ -1,0 +1,64 @@
+---
+title: CLI commands
+description: Everything the TUI does, as one-line commands.
+---
+
+Run `sudo hostable` with no arguments for the interactive TUI. With a command it runs once and exits, so it works in scripts, SSH one-liners and cron.
+
+Server arguments take the server name or id (`"Friends SMP"` or `friends-smp`).
+
+| Command | What it does |
+| --- | --- |
+| `hostable list` | Servers, game, state (`active`/`inactive`) and ports. |
+| `hostable create <game> <name>` | Install a new server. |
+| `hostable import <game> <name> <path>` | Adopt a server already on disk. |
+| `hostable start <server>` | Start. Refuses if the port is taken by another process. |
+| `hostable stop <server> [--force]` | Save and stop. Refuses while players are online. |
+| `hostable restart <server> [--force]` | Save and restart. Refuses while players are online. |
+| `hostable backup <server>` | Back up now. |
+| `hostable update <server> [--force]` | Back up, then update the game files (Steam games). |
+| `hostable console <server> <command...>` | Run an RCON command. |
+| `hostable logs <server> [--lines N]` | Recent log lines. |
+| `hostable doctor <server>` | Known problems for this server. |
+| `hostable disk [--clean journal\|apt]` | Disk usage; optionally clean something safe. |
+| `hostable swap <MB>` | Create a swapfile. |
+| `hostable preflight <game> [--memory-mb N]` | Can this machine run it? |
+
+`<game>` is `minecraft`, `ark` or `palworld`.
+
+## create
+
+```text
+hostable create <game> <name> --accept-license
+    [--server-type vanilla|paper|fabric]   Minecraft only
+    [--version 1.20.4]
+    [--memory-mb 4096]
+    [--join-password ...]                  Palworld / ARK
+    [--dry-run]
+```
+
+## Global options
+
+```text
+--daemon-url <URL>         default http://127.0.0.1:8080
+--operator-token <PATH>    default /etc/hostable/operator-token
+```
+
+## Exit codes
+
+`0` on success. Anything else prints the daemon's error message, for example `2 player(s) are online. Ask them to leave, or repeat with force=true to interrupt them.`
+
+## Scripting examples
+
+Nightly backup of every server:
+
+```bash title="/etc/cron.d/hostable-backup"
+0 4 * * * root for s in $(hostable list | awk '{print $1}'); do hostable backup "$s"; done
+```
+
+Announce, then restart when empty:
+
+```bash
+hostable console friends-smp "say Server restarts in 5 minutes"
+sleep 300 && hostable restart friends-smp
+```

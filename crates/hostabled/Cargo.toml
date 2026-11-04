@@ -1,9 +1,13 @@
 [package]
 name = "hostabled"
 version.workspace = true
+description = "Daemon that runs game servers as systemd services and serves the optional web admin"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true

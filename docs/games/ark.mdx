@@ -1,0 +1,27 @@
+---
+title: "ARK: Survival Evolved"
+description: ARK SE through SteamCMD (not Survival Ascended).
+---
+
+## Requirements
+
+About 8 GB RAM and 25 GB of disk. Run `hostable preflight ark`.
+
+## Create
+
+```bash
+sudo hostable create ark "Friends Ark" --accept-license
+```
+
+Installs app `376030` with SteamCMD, writes `GameUserSettings.ini`, `Game.ini` and `start.sh` (default map **Fjordur**), and opens `7777/udp`, `7778/udp` and `27015/udp`.
+
+> [!IMPORTANT]
+> ARK uses a fixed set of ports, so **one ARK server per machine** is supported. Hostable refuses to start a second one while the ports are taken.
+
+## Config
+
+The TUI editor shows `GameUserSettings.ini` and `Game.ini`. Restart after changes.
+
+## Console, updates and backups
+
+The same commands as other games work: `hostable console`, `hostable update`, `hostable backup`. Live backups of ARK can be slightly inconsistent because its save files are large and active. Stop the server first if you need a perfect copy.

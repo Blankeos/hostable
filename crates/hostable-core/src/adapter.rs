@@ -13,7 +13,7 @@ pub trait GameAdapter: Send + Sync {
 
     fn detect_existing(&self, path: &Path) -> Result<DetectedServer>;
     fn plan_install(&self, input: CreateServerInput) -> Result<ActionPlan>;
-    fn plan_import(&self, detected: DetectedServer) -> Result<ActionPlan>;
+    fn plan_import(&self, detected: DetectedServer, name: &str) -> Result<ActionPlan>;
 
     fn read_config(&self, server: &ServerRecord) -> Result<ConfigDocument>;
     fn write_config(&self, server: &ServerRecord, patch: ConfigPatch) -> Result<()>;
@@ -25,6 +25,17 @@ pub trait GameAdapter: Send + Sync {
         None
     }
 
+    /// Steps that update the game files in place (the caller stops the service and
+    /// takes a backup first). `None` means the game has no in-place updater.
+    fn plan_update(&self, _server: &ServerRecord) -> Option<Vec<crate::actions::HostAction>> {
+        None
+    }
+
+    /// Steam build id currently installed, when the game is installed through Steam.
+    fn installed_build(&self, _server: &ServerRecord) -> Option<String> {
+        None
+    }
+
     fn modrinth(&self) -> Option<&dyn ModrinthCapability> {
         None
     }
@@ -33,6 +44,12 @@ pub trait GameAdapter: Send + Sync {
 pub trait ConsoleCapability: Send + Sync {
     fn command_examples(&self) -> Vec<&'static str>;
     fn send_command(&self, server: &ServerRecord, command: &str) -> Result<ConsoleCommandResult>;
+
+    /// Console command that flushes the world to disk, sent before stops and restarts.
+    fn save_command(&self) -> &'static str;
+
+    /// Number of players online right now, or `None` when the game cannot say.
+    fn online_players(&self, server: &ServerRecord) -> Result<Option<u32>>;
 }
 
 pub trait ModrinthCapability: Send + Sync {
@@ -45,6 +62,7 @@ pub trait ModrinthCapability: Send + Sync {
 pub enum GameKind {
     Minecraft,
     ArkSurvivalEvolved,
+    Palworld,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +72,7 @@ pub enum ServerType {
     Paper,
     Fabric,
     ArkSurvivalEvolved,
+    Palworld,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +94,13 @@ pub struct DetectedServer {
     pub install_path: PathBuf,
     pub server_type: Option<ServerType>,
     pub confidence: DetectionConfidence,
+    /// Ports the existing server really uses (read from its config).
+    #[serde(default)]
+    pub ports: Vec<PortSpec>,
+    /// Settings found in the existing server (RCON port/password, ...) that
+    /// Hostable needs to manage it. Merged into the record's `extra`.
+    #[serde(default)]
+    pub extra: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +116,15 @@ pub struct Requirements {
     pub packages: Vec<String>,
     pub architectures: Vec<String>,
     pub apt_components: Vec<String>,
+    /// Below this the game is likely to be OOM-killed even with swap.
+    #[serde(default)]
+    pub min_memory_mb: u32,
+    /// What the game vendor recommends for a comfortable server.
+    #[serde(default)]
+    pub recommended_memory_mb: u32,
+    /// Free disk needed to install the game and a few backups.
+    #[serde(default)]
+    pub min_disk_mb: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

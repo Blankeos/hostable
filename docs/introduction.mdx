@@ -1,0 +1,43 @@
+---
+title: Introduction
+description: Install and run game servers on your own VPS with one command.
+---
+
+# Hostable
+
+Hostable installs and runs game servers on a cheap VPS, so a group of friends can host their own world without learning systemd, firewalls, SteamCMD or Java flags.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/blankeos/hostable/main/install.sh | sh
+sudo hostable
+```
+
+You get:
+
+- **A terminal app (TUI)** to create, start, stop, back up and watch servers.
+- **Scriptable commands** for the same things: `hostable restart my-server`, `hostable update palworld`.
+- **A small web admin** (off by default) so friends with the password can start and stop a server from a phone.
+
+## Supported games
+
+| Game | Install | Console | Notes |
+| --- | --- | --- | --- |
+| [Minecraft](/games/minecraft) | Vanilla, Paper, Fabric, Modrinth modpacks | RCON | Players are counted before restarts. |
+| [Palworld](/games/palworld) | SteamCMD | RCON | Seeds the config, flags a co-op `WorldOption.sav` override. |
+| [ARK: Survival Evolved](/games/ark) | SteamCMD | RCON | One ARK server per machine. |
+
+## How it works
+
+Hostable is a small daemon (`hostabled`) plus a terminal app (`hostable`). The daemon runs as root and does the privileged work: installing packages, writing systemd units, opening firewall ports. Game servers run as a normal user. You talk to the daemon from the same machine; it never accepts control from the internet unless you turn the web admin on.
+
+> [!NOTE]
+> Hostable needs Debian or Ubuntu with systemd. It manages plain files and services, there is no Docker, and your game files stay in normal folders you can edit by hand.
+
+## What it does for you
+
+- Installs dependencies (Java, SteamCMD, 32-bit libraries) and opens only the ports a game needs.
+- Picks free ports when you run two servers of the same game.
+- Warns when a game will not fit in RAM, and can create swap.
+- Refuses to restart or update a server while players are online.
+- Backs up before every update.
+- Shows what is eating your disk, and trims logs safely.

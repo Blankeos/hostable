@@ -548,8 +548,10 @@ mod tests {
                 )
                 .as_bytes()
                 .to_vec(),
-                b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n".to_vec(),
-                b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n".to_vec(),
+                b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    .to_vec(),
+                b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    .to_vec(),
             ];
             let mut requests = Vec::new();
             for response in responses {

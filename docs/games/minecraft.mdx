@@ -1,0 +1,52 @@
+---
+title: Minecraft
+description: Vanilla, Paper, Fabric and Modrinth modpacks.
+---
+
+## Create
+
+```bash
+sudo hostable create minecraft "Friends SMP" --server-type fabric --version 1.20.4 --memory-mb 4096 --accept-license
+```
+
+| Option | Values |
+| --- | --- |
+| `--server-type` | `vanilla`, `paper`, `fabric` |
+| `--version` | A Minecraft version such as `1.20.4`; omit for the latest release (vanilla). |
+| `--memory-mb` | Java heap. Leave 1-2 GB for the OS. |
+
+The TUI also offers **Modrinth** search for mods and modpacks (installed with `mrpack-install`).
+
+What gets set up:
+
+- `server.jar` (or the Fabric/Paper launcher), `eula.txt`, `server.properties`, `start.sh`.
+- **RCON on.** Hostable uses it for the console, saves before backups and stops, and counting players. It connects over `127.0.0.1` and the port is never opened in the firewall.
+- A systemd unit with a 120 second stop timeout, so the world is saved on `systemctl stop`.
+- The game port, `25565/tcp` or the next free one.
+
+> [!NOTE]
+> Online mode is on by default. For offline-mode servers (cracked clients), add the SkinRestorer mod, otherwise skins do not load.
+
+## Ports
+
+Hostable picks `25565`, and if something already uses it (or another Hostable server has it), the next free port. `hostable list` shows the result.
+
+## Console
+
+```bash
+sudo hostable console friends-smp list
+sudo hostable console friends-smp "say Restarting in 5 minutes"
+sudo hostable console friends-smp whitelist add Steve
+```
+
+## Restarting safely
+
+```bash
+sudo hostable restart friends-smp
+```
+
+If anyone is online, Hostable refuses and tells you how many. Use `--force` to restart anyway. Otherwise it runs `save-all`, then restarts.
+
+## What a backup contains
+
+The `world`, `server.properties`, `ops.json`, `whitelist.json`, bans, `config/`, `defaultconfigs/` and Hostable's mod manifest. Mod jars are not included: they can be downloaded again.

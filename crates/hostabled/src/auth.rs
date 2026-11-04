@@ -10,21 +10,27 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
 
 pub const SESSION_COOKIE: &str = "hostable_session";
+const SESSION_TTL: Duration = Duration::from_secs(60 * 60 * 24 * 7);
+const MAX_FAILED_LOGINS: u32 = 5;
+const LOGIN_LOCKOUT: Duration = Duration::from_secs(60);
+
 pub const OPERATOR_TOKEN_HEADER: &str = "x-hostable-operator-token";
 
 #[derive(Clone)]
 pub struct AuthStore {
     password_hash_path: PathBuf,
     operator_token_path: PathBuf,
-    sessions: Arc<Mutex<HashSet<String>>>,
+    sessions: Arc<Mutex<HashMap<String, Instant>>>,
+    failed_logins: Arc<Mutex<(u32, Option<Instant>)>>,
 }
 
 impl AuthStore {
@@ -32,7 +38,8 @@ impl AuthStore {
         Self {
             password_hash_path,
             operator_token_path,
-            sessions: Arc::new(Mutex::new(HashSet::new())),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            failed_logins: Arc::new(Mutex::new((0, None))),
         }
     }
 
@@ -73,7 +80,7 @@ impl AuthStore {
         self.sessions
             .lock()
             .expect("auth session mutex poisoned")
-            .insert(token.clone());
+            .insert(token.clone(), Instant::now());
         token
     }
 
@@ -92,10 +99,28 @@ impl AuthStore {
     }
 
     pub fn valid_session(&self, token: &str) -> bool {
-        self.sessions
-            .lock()
-            .expect("auth session mutex poisoned")
-            .contains(token)
+        let mut sessions = self.sessions.lock().expect("auth session mutex poisoned");
+        sessions.retain(|_, created| created.elapsed() < SESSION_TTL);
+        sessions.contains_key(token)
+    }
+
+    /// True while too many wrong passwords were entered recently.
+    pub fn login_locked(&self) -> bool {
+        let state = self.failed_logins.lock().expect("login mutex poisoned");
+        state.0 >= MAX_FAILED_LOGINS && state.1.is_some_and(|last| last.elapsed() < LOGIN_LOCKOUT)
+    }
+
+    pub fn record_login_result(&self, ok: bool) {
+        let mut state = self.failed_logins.lock().expect("login mutex poisoned");
+        if ok {
+            *state = (0, None);
+        } else {
+            if state.1.is_some_and(|last| last.elapsed() >= LOGIN_LOCKOUT) {
+                state.0 = 0;
+            }
+            state.0 += 1;
+            state.1 = Some(Instant::now());
+        }
     }
 
     pub fn authenticated_headers(&self, headers: &HeaderMap) -> bool {
@@ -118,12 +143,12 @@ impl AuthStore {
             return false;
         };
         let expected = expected.trim();
-        !expected.is_empty() && expected == token
+        !expected.is_empty() && constant_time_eq(expected.as_bytes(), token.as_bytes())
     }
 }
 
 pub fn session_cookie(token: &str) -> String {
-    format!("{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000")
+    format!("{SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800")
 }
 
 pub fn clear_session_cookie() -> String {
@@ -156,6 +181,13 @@ pub async fn require_auth(State(auth): State<AuthStore>, request: Request, next:
         )
             .into_response()
     }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn validate_password(password: &str) -> Result<()> {

@@ -1,0 +1,40 @@
+---
+title: Security model
+description: What Hostable protects, and what it expects from you.
+---
+
+Hostable's daemon runs as root, so most of its design is about keeping that power off the network and away from the game servers.
+
+## Who can do what
+
+| Actor | Can |
+| --- | --- |
+| Root / `sudo` on the VPS | Everything, through the TUI, CLI or API using the operator token. |
+| The `hostable` game user (and anything a game or mod runs) | Read and write its own server folder only. Cannot change the registry, settings or the daemon. |
+| Anyone on the internet | Nothing, unless the web admin is on, and then only what a logged-in admin can do. |
+
+## Rules the daemon enforces
+
+- **The operator token is `0600` root.** It only works from the VPS itself. Requests from other addresses are refused even if they present it.
+- **State is root-owned.** `/etc/hostable` and `/var/lib/hostable` are not writable by the game user.
+- **Admin password setup is local-only.** No first visitor can claim a public admin page.
+- **Login throttling and expiring sessions** (5 wrong passwords lock for a minute; sessions last 7 days).
+- **Validated input.** Names are restricted to letters, digits, spaces, `-`, `_`, `.`. Install paths must live under `/srv/hostable/servers`. Values that end up in shell scripts and quoted config reject `"`, `` ` ``, `$` and `\`. Newlines are rejected everywhere, so nobody can inject lines into a systemd unit.
+- **Service names are derived** (`hostable-<id>.service`). The API cannot be told to stop `sshd`.
+- **No raw server registration endpoint.** Servers enter through `create` or `import` only.
+- **Backups never follow symlinks.**
+- **RCON is never exposed.** Games bind their RCON port on all interfaces, but Hostable never opens it in the firewall and only talks to it over `127.0.0.1`.
+- **Files with secrets are `0600`:** `server.properties` (RCON password), `PalWorldSettings.ini`, `secrets.env`.
+
+## Firewall
+
+Hostable opens only a game's own ports. The first time it needs the firewall it allows SSH (the port in `sshd -T`, or 22) before turning `ufw` on, so you are not locked out.
+
+> [!WARNING]
+> Provider-side firewalls (security groups) are outside Hostable's reach. If a port is open in `ufw` but friends still cannot connect, check your provider's dashboard.
+
+## Known limits
+
+- All game servers share the `hostable` user. A compromised game can read the files of another game server on the same machine. Per-server users are planned.
+- Imported servers keep running as whoever owns their folder.
+- The web admin uses plain HTTP unless you put a TLS proxy in front.
