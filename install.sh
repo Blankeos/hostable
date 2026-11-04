@@ -2,7 +2,7 @@
 set -eu
 
 REPO="${HOSTABLE_REPO:-blankeos/hostable}"
-VERSION="${HOSTABLE_VERSION:-latest}"
+RELEASE_VERSION="${HOSTABLE_VERSION:-latest}"
 DOWNLOAD_URL="${HOSTABLE_DOWNLOAD_URL:-}"
 INSTALL_DIR="${HOSTABLE_INSTALL_DIR:-/usr/local/bin}"
 STATE_DIR="${HOSTABLE_STATE_DIR:-/var/lib/hostable}"
@@ -75,10 +75,10 @@ if [ -n "$DOWNLOAD_URL" ]; then
   echo "Installing Hostable for $TARGET from $DOWNLOAD_URL..."
   ASSET_URL="$DOWNLOAD_URL"
 else
-  if [ "$VERSION" = "latest" ]; then
+  if [ "$RELEASE_VERSION" = "latest" ]; then
     RELEASE_URL="https://api.github.com/repos/$REPO/releases/latest"
   else
-    RELEASE_URL="https://api.github.com/repos/$REPO/releases/tags/$VERSION"
+    RELEASE_URL="https://api.github.com/repos/$REPO/releases/tags/$RELEASE_VERSION"
   fi
 
   echo "Installing Hostable for $TARGET from $REPO..."
