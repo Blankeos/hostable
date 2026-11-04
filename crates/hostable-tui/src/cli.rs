@@ -121,6 +121,14 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Upgrade hostable and its daemon to the latest release (or a given version).
+    Upgrade {
+        /// A version like 0.0.2. Defaults to the latest release.
+        version: Option<String>,
+        /// Only say whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+    },
     /// Adopt a server that is already installed on this machine.
     Import {
         #[arg(value_enum)]
@@ -451,6 +459,8 @@ pub fn run(command: Command, api: &Api) -> Result<()> {
                 );
             }
         }
+        // `main` runs this before the daemon token is read; this arm only keeps the match complete.
+        Command::Upgrade { version, check } => crate::upgrade::run(version.as_deref(), check)?,
         Command::Import {
             game,
             name,
