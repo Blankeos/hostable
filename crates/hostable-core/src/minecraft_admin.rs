@@ -11,6 +11,20 @@ use std::path::{Path, PathBuf};
 const SIDECAR: &str = "hostable.installed-mods.json";
 const MAX_NAME_LEN: usize = 16;
 
+/// Fabric ships `fabric-server-launch.jar`, but the launcher download from fabricmc.net
+/// (and most modpacks) is named like `fabric-server-mc.1.21.1-loader.0.18.4-launcher.1.1.2.jar`.
+pub fn has_fabric_launcher(path: &Path) -> bool {
+    fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.ends_with(".jar") && name.starts_with("fabric-server-")
+        })
+}
+
 /// Directory that holds mods (Fabric) or plugins (Paper). `None` for vanilla,
 /// which cannot load either.
 pub fn extensions_dir(install_path: &Path, server_type: &str) -> Option<PathBuf> {
@@ -466,5 +480,20 @@ mod tests {
         assert!(!props.white_list);
         assert!(!props.online_mode);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn detects_both_fabric_launcher_names() {
+        for name in [
+            "fabric-server-launch.jar",
+            "fabric-server-mc.1.21.1-loader.0.18.4-launcher.1.1.2.jar",
+        ] {
+            let root = temp_dir("fabric-launcher");
+            fs::write(root.join(name), b"").unwrap();
+            assert!(has_fabric_launcher(&root), "{name}");
+        }
+        let root = temp_dir("fabric-launcher-none");
+        fs::write(root.join("server.jar"), b"").unwrap();
+        assert!(!has_fabric_launcher(&root));
     }
 }
