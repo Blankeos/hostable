@@ -76,7 +76,7 @@ bunx gittydocs@latest dev ./docs
 just dev        # run the TUI against a local daemon
 just lint       # fmt + clippy
 just test       # cargo tests
-just web        # build the admin web page and the landing page
+just web        # build the admin web page
 ```
 
 MIT licensed.

@@ -4,6 +4,9 @@
     "name": "Hostable",
     "version": { "cargoToml": "../crates/hostable-tui/Cargo.toml" },
     "description": "Install and run game servers on your own VPS with one command.",
+    "logo": "/static/logo.svg",
+    "favicon": "/static/logo.svg",
+    "socialBanner": "/static/og.png",
     "repo": {
       "owner": "blankeos",
       "name": "hostable",
@@ -12,14 +15,14 @@
     }
   },
   "theme": {
-    "preset": "ocean"
+    "preset": "mono"
   },
   "nav": [
     {
       "label": "Start here",
       "icon": "rocket",
       "items": [
-        { "label": "Introduction", "path": "/", "icon": "book" },
+        { "label": "Introduction", "path": "/introduction", "icon": "book" },
         { "label": "Install", "path": "/install", "icon": "terminal" },
         { "label": "Your first server", "path": "/first-server", "icon": "rocket" }
       ]

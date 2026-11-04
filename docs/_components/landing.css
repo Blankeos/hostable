@@ -1,0 +1,257 @@
+/* Spacing scale: 4 8 12 16 24 32 48 64. Everything below uses these. */
+.hl {
+  --hl-space-1: 4px;
+  --hl-space-2: 8px;
+  --hl-space-3: 12px;
+  --hl-space-4: 16px;
+  --hl-space-5: 24px;
+  --hl-space-6: 32px;
+  --hl-space-7: 48px;
+  --hl-space-8: 64px;
+  --hl-radius: 6px;
+
+  min-height: 100vh;
+  color: var(--foreground);
+  background: var(--background);
+  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.hl h1,
+.hl h2,
+.hl h3,
+.hl p,
+.hl ul,
+.hl ol {
+  margin: 0;
+  padding: 0;
+}
+
+.hl ul,
+.hl ol {
+  list-style: none;
+}
+
+.hl a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.hl a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.hl code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 0.875em;
+}
+
+.hl-wrap {
+  width: min(720px, 100% - var(--hl-space-5) * 2);
+  margin: 0 auto;
+}
+
+.hl-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hl-space-5);
+  padding: var(--hl-space-8) 0 var(--hl-space-7);
+}
+
+.hl-hero h1 {
+  font-size: clamp(32px, 6vw, 44px);
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.hl-lede {
+  max-width: 600px;
+  color: var(--muted-foreground);
+  font-size: 18px;
+}
+
+.hl-command {
+  display: flex;
+  align-items: center;
+  gap: var(--hl-space-3);
+  padding: var(--hl-space-2) var(--hl-space-2) var(--hl-space-2) var(--hl-space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--hl-radius);
+  background: var(--muted);
+}
+
+.hl-command code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.hl button {
+  flex: none;
+  height: 32px;
+  padding: 0 var(--hl-space-3);
+  border: 1px solid var(--primary);
+  border-radius: var(--hl-radius);
+  color: var(--primary-foreground);
+  background: var(--primary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.hl button:hover {
+  opacity: 0.88;
+}
+
+.hl button:focus-visible,
+.hl a:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.hl-hint {
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+.hl-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hl-space-2) var(--hl-space-5);
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+.hl-facts li {
+  display: flex;
+  align-items: center;
+  gap: var(--hl-space-2);
+}
+
+.hl-facts svg {
+  width: 16px;
+  height: 16px;
+}
+
+.hl-block {
+  display: grid;
+  gap: var(--hl-space-4);
+  padding: var(--hl-space-6) 0;
+  border-top: 1px solid var(--border);
+}
+
+.hl-block h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.hl-block h3 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.hl-steps {
+  display: grid;
+  gap: var(--hl-space-5);
+}
+
+.hl-steps li {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: var(--hl-space-3);
+  align-items: start;
+}
+
+.hl-steps p {
+  color: var(--muted-foreground);
+}
+
+.hl-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--hl-radius);
+  color: var(--muted-foreground);
+  background: var(--muted);
+}
+
+.hl-tile svg {
+  width: 18px;
+  height: 18px;
+}
+
+.hl-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hl-game-name {
+  display: flex;
+  align-items: center;
+  gap: var(--hl-space-3);
+}
+
+.hl-game-name .hl-tile {
+  width: 40px;
+  height: 40px;
+}
+
+.hl-games {
+  border: 1px solid var(--border);
+  border-radius: var(--hl-radius);
+  background: var(--card);
+}
+
+.hl-games li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hl-space-4);
+  padding: var(--hl-space-4);
+}
+
+.hl-games li + li {
+  border-top: 1px solid var(--border);
+}
+
+.hl-games .hl-detail {
+  color: var(--muted-foreground);
+  font-size: 14px;
+  text-align: right;
+}
+
+.hl-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--hl-space-4);
+  padding: var(--hl-space-6) 0 var(--hl-space-7);
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+@media (max-width: 560px) {
+  .hl-games li {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--hl-space-1);
+  }
+
+  .hl-games .hl-detail {
+    text-align: left;
+  }
+
+  .hl-hero {
+    padding-top: var(--hl-space-7);
+  }
+}

@@ -3,12 +3,10 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "web/admin",
-    "web/landing"
+    "web/admin"
   ],
   "scripts": {
-    "build:web": "bun run build:admin && bun run build:landing",
-    "build:admin": "cd web/admin && bun run build",
-    "build:landing": "cd web/landing && bun run build"
+    "build:web": "bun run build:admin",
+    "build:admin": "cd web/admin && bun run build"
   }
 }

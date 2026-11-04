@@ -33,9 +33,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build:web
       - name: Type-check
-        run: |
-          cd web/admin && bunx tsc --noEmit
-          cd ../landing && bunx tsc --noEmit
+        run: cd web/admin && bunx tsc --noEmit
 
   docs:
     runs-on: ubuntu-latest
