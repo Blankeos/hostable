@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.3] - 2026-11-04
+
+### Bug Fixes
+
+- Detect Fabric servers using the fabric-server-mc.*-launcher.*.jar name by @Blankeos
+
 ## [0.0.2] - 2026-11-04
 
 ### Bug Fixes
