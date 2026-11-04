@@ -1342,28 +1342,29 @@ mod tests {
         app.handle_event(press(KeyCode::Char('m')));
         requests.recv().unwrap();
         let screen = text(&render(&mut app, 100, 24));
-        for expected in [
-            "COBBLEVERSE 1.7.42",
-            "1 in pack",
-            "1 added",
-            "cobblemon.jar",
-            "mine.jar",
-        ] {
+        for expected in ["COBBLEVERSE 1.7.42", "1 in pack", "1 added", "mine.jar"] {
             assert!(screen.contains(expected), "missing {expected:?}\n{screen}");
         }
-        app.handle_event(press(KeyCode::Char('p')));
+        // Collapsed by default: the added mod is visible, the pack's are tucked away.
         let screen = text(&render(&mut app, 100, 24));
-        assert!(screen.contains("showing pack"), "{screen}");
-        assert!(
-            screen.contains("cobblemon.jar") && !screen.contains("mine.jar"),
-            "{screen}"
-        );
-        app.handle_event(press(KeyCode::Char('p')));
+        assert!(screen.contains("mine.jar"), "{screen}");
+        assert!(screen.contains("▸ COBBLEVERSE 1.7.42"), "{screen}");
+        assert!(!screen.contains("cobblemon.jar"), "{screen}");
+
+        // Move onto the pack header and open it.
+        app.handle_event(press(KeyCode::Down));
+        app.handle_event(press(KeyCode::Enter));
         let screen = text(&render(&mut app, 100, 24));
-        assert!(
-            screen.contains("mine.jar") && !screen.contains("cobblemon.jar"),
-            "{screen}"
-        );
+        assert!(screen.contains("▾ COBBLEVERSE 1.7.42"), "{screen}");
+        assert!(screen.contains("cobblemon.jar"), "{screen}");
+
+        // Left from a nested mod returns to the header, left again closes it.
+        app.handle_event(press(KeyCode::Down));
+        app.handle_event(press(KeyCode::Left));
+        assert_eq!(app.manage.mods.selected, 1);
+        app.handle_event(press(KeyCode::Left));
+        let screen = text(&render(&mut app, 100, 24));
+        assert!(!screen.contains("cobblemon.jar"), "{screen}");
     }
 
     #[test]

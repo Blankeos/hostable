@@ -148,25 +148,6 @@ pub(super) struct ModsData {
     pub modpack: Option<ModpackInfo>,
 }
 
-/// Which mods the list shows when the server was built from a modpack.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum ModScope {
-    #[default]
-    All,
-    Pack,
-    Added,
-}
-
-impl ModScope {
-    fn next(self) -> Self {
-        match self {
-            ModScope::All => ModScope::Pack,
-            ModScope::Pack => ModScope::Added,
-            ModScope::Added => ModScope::All,
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub(super) struct ModSearch {
     pub input: String,
@@ -186,7 +167,8 @@ pub(super) struct ModsView {
     pub selected: usize,
     pub filter: String,
     pub filtering: bool,
-    pub scope: ModScope,
+    /// The modpack accordion is open.
+    pub pack_open: bool,
     pub search: Option<ModSearch>,
     pub pending_remove: Option<String>,
     pub restart_needed: bool,
@@ -224,6 +206,20 @@ fn config_about(name: &str) -> &'static str {
         "Game.ini" => "Rates, breeding, taming, per-level overrides",
         _ => "",
     }
+}
+
+/// One line of the Mods list.
+pub(super) enum ModRow<'a> {
+    Pack {
+        pack: &'a ModpackInfo,
+        count: usize,
+        off: usize,
+        open: bool,
+    },
+    Mod {
+        item: &'a InstalledMod,
+        nested: bool,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -288,18 +284,13 @@ impl Manage {
         }
     }
 
-    fn visible_mods(&self) -> Vec<&InstalledMod> {
+    fn filtered_mods(&self) -> Vec<&InstalledMod> {
         let Some(data) = &self.mods.data else {
             return Vec::new();
         };
         let needle = self.mods.filter.to_lowercase();
         data.items
             .iter()
-            .filter(|item| match self.mods.scope {
-                ModScope::All => true,
-                ModScope::Pack => item.in_pack,
-                ModScope::Added => !item.in_pack,
-            })
             .filter(|item| {
                 needle.is_empty()
                     || item.filename.to_lowercase().contains(&needle)
@@ -309,6 +300,49 @@ impl Manage {
                         .is_some_and(|title| title.to_lowercase().contains(&needle))
             })
             .collect()
+    }
+
+    /// What the list shows, top to bottom: mods added on top, then the modpack as an
+    /// accordion with its own mods nested under it. A filter opens the accordion.
+    fn mod_rows(&self) -> Vec<ModRow<'_>> {
+        let Some(data) = &self.mods.data else {
+            return Vec::new();
+        };
+        let items = self.filtered_mods();
+        let Some(pack) = &data.modpack else {
+            return items
+                .into_iter()
+                .map(|item| ModRow::Mod {
+                    item,
+                    nested: false,
+                })
+                .collect();
+        };
+        let (in_pack, added): (Vec<_>, Vec<_>) = items.into_iter().partition(|item| item.in_pack);
+        let mut rows: Vec<ModRow> = added
+            .into_iter()
+            .map(|item| ModRow::Mod {
+                item,
+                nested: false,
+            })
+            .collect();
+        if !in_pack.is_empty() {
+            let open = self.mods.pack_open || !self.mods.filter.is_empty();
+            rows.push(ModRow::Pack {
+                pack,
+                count: in_pack.len(),
+                off: in_pack.iter().filter(|item| !item.enabled).count(),
+                open,
+            });
+            if open {
+                rows.extend(
+                    in_pack
+                        .into_iter()
+                        .map(|item| ModRow::Mod { item, nested: true }),
+                );
+            }
+        }
+        rows
     }
 
     /// Names shown in a players column, in display order.
@@ -929,7 +963,7 @@ impl App {
             Ok(data) => {
                 self.manage.mods.error = None;
                 self.manage.mods.data = Some(data);
-                let len = self.manage.visible_mods().len();
+                let len = self.manage.mod_rows().len();
                 self.manage.mods.selected = self.manage.mods.selected.min(len.saturating_sub(1));
             }
             Err(error) => self.manage.mods.error = Some(error),
@@ -937,10 +971,15 @@ impl App {
     }
 
     fn selected_mod(&self) -> Option<InstalledMod> {
-        self.manage
-            .visible_mods()
-            .get(self.manage.mods.selected)
-            .map(|item| (*item).clone())
+        match self.manage.mod_rows().get(self.manage.mods.selected)? {
+            ModRow::Mod { item, .. } => Some((*item).clone()),
+            ModRow::Pack { .. } => None,
+        }
+    }
+
+    fn toggle_pack(&mut self, open: Option<bool>) {
+        let pack_open = &mut self.manage.mods.pack_open;
+        *pack_open = open.unwrap_or(!*pack_open);
     }
 
     fn search_mods(&mut self) {
@@ -1011,11 +1050,7 @@ impl App {
                 link::modrinth_project(&hit.project_id)
             });
         }
-        let item = self
-            .manage
-            .visible_mods()
-            .get(self.manage.mods.selected)
-            .copied()?;
+        let item = self.selected_mod()?;
         let id = item.project_id.as_deref()?;
         id.chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
@@ -1128,7 +1163,7 @@ impl App {
             return;
         }
 
-        let len = self.manage.visible_mods().len();
+        let len = self.manage.mod_rows().len();
         match code {
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.manage.mods.selected + 1 < len {
@@ -1146,16 +1181,29 @@ impl App {
                 self.manage.mods.selected = self.manage.mods.selected.saturating_sub(10);
             }
             KeyCode::Char('/') => self.manage.mods.filtering = true,
-            KeyCode::Char('p')
-                if self
-                    .manage
-                    .mods
-                    .data
-                    .as_ref()
-                    .is_some_and(|d| d.modpack.is_some()) =>
-            {
-                self.manage.mods.scope = self.manage.mods.scope.next();
-                self.manage.mods.selected = 0;
+            KeyCode::Enter | KeyCode::Right | KeyCode::Left => {
+                let rows = self.manage.mod_rows();
+                match rows.get(self.manage.mods.selected) {
+                    Some(ModRow::Pack { .. }) => {
+                        drop(rows);
+                        self.toggle_pack(match code {
+                            KeyCode::Right => Some(true),
+                            KeyCode::Left => Some(false),
+                            _ => None,
+                        });
+                    }
+                    // Left from inside the pack jumps back to its header.
+                    Some(ModRow::Mod { nested: true, .. }) if code == KeyCode::Left => {
+                        if let Some(header) = rows
+                            .iter()
+                            .position(|row| matches!(row, ModRow::Pack { .. }))
+                        {
+                            drop(rows);
+                            self.manage.mods.selected = header;
+                        }
+                    }
+                    _ => {}
+                }
             }
             KeyCode::Char('r') => self.refresh_mods(),
             KeyCode::Char('o') => self.open_mod_link(),
@@ -1174,7 +1222,12 @@ impl App {
                 }
             }
             KeyCode::Char(' ') | KeyCode::Char('e') => {
-                if let Some(item) = self.selected_mod() {
+                if matches!(
+                    self.manage.mod_rows().get(self.manage.mods.selected),
+                    Some(ModRow::Pack { .. })
+                ) {
+                    self.toggle_pack(None);
+                } else if let Some(item) = self.selected_mod() {
                     let id = self.manage.server_id.clone();
                     let body = serde_json::json!({ "filename": item.filename });
                     self.status = match self.api_post::<ActionReply>(
@@ -1363,7 +1416,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|d| d.modpack.is_some())
                 {
-                    hints.push(("p", "pack / added"));
+                    hints.push(("enter", "open / close pack"));
                 }
                 hints.push(("R", "restart"));
                 hints.push(("tab", self.next_tab_label()));
@@ -1739,19 +1792,10 @@ impl App {
             data.game_version.as_deref().unwrap_or("unknown")
         );
         let mut summary = match &data.modpack {
-            Some(pack) => {
+            Some(_) => {
                 let in_pack = data.items.iter().filter(|item| item.in_pack).count();
                 let added = data.items.len() - in_pack;
-                let name = match &pack.version {
-                    Some(version) => format!("{} {version}", pack.name),
-                    None => pack.name.clone(),
-                };
-                let scope = match mods.scope {
-                    ModScope::All => "",
-                    ModScope::Pack => " · showing pack",
-                    ModScope::Added => " · showing added",
-                };
-                format!("{name} · {in_pack} in pack · {added} added · {engine}{scope}")
+                format!("{in_pack} in pack · {added} added · {engine}")
             }
             None => format!(
                 "{} mod{} · {engine}",
@@ -1812,7 +1856,7 @@ impl App {
             list_area = rows[1];
         }
 
-        let visible = self.manage.visible_mods();
+        let visible = self.manage.mod_rows();
         if visible.is_empty() {
             let message = if data.items.is_empty() {
                 "No mods yet. Press a to search Modrinth.".to_string()
@@ -1826,19 +1870,51 @@ impl App {
                 .saturating_sub(u16::from(mods.pending_remove.is_some()))
                 as usize;
             let offset = mods.selected.saturating_sub(height.saturating_sub(1));
-            let name_width = (list_area.width as usize).saturating_sub(36).clamp(12, 40);
+            let name_width = (list_area.width as usize).saturating_sub(38).clamp(12, 60);
             let lines: Vec<Line> = visible
                 .iter()
                 .enumerate()
                 .skip(offset)
                 .take(height)
-                .map(|(index, item)| {
+                .map(|(index, row)| {
                     let chosen = index == mods.selected;
+                    let pointer = Span::styled(if chosen { "› " } else { "  " }, t.accent());
+                    let (item, nested) = match row {
+                        ModRow::Pack {
+                            pack,
+                            count,
+                            off,
+                            open,
+                        } => {
+                            let name = match &pack.version {
+                                Some(version) => format!("{} {version}", pack.name),
+                                None => pack.name.clone(),
+                            };
+                            let style = if chosen {
+                                t.accent().add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default().add_modifier(Modifier::BOLD)
+                            };
+                            let mut detail = format!("   {count} mods");
+                            if *off > 0 {
+                                detail.push_str(&format!(" · {off} off"));
+                            }
+                            return Line::from(vec![
+                                pointer,
+                                Span::styled(if *open { "▾ " } else { "▸ " }, t.accent()),
+                                Span::styled(name, style),
+                                Span::styled(detail, t.muted()),
+                            ]);
+                        }
+                        ModRow::Mod { item, nested } => (item, *nested),
+                    };
+                    let indent = if nested { "    " } else { "" };
+                    let width = name_width.saturating_sub(indent.len());
                     let name = item
                         .title
                         .clone()
                         .unwrap_or_else(|| item.filename.trim_end_matches(".disabled").to_string());
-                    let name: String = name.chars().take(name_width).collect();
+                    let name: String = name.chars().take(width).collect();
                     let style = if chosen {
                         t.accent().add_modifier(Modifier::BOLD)
                     } else if item.enabled {
@@ -1851,13 +1927,12 @@ impl App {
                     } else {
                         Span::styled("off", t.faint())
                     };
-                    let added = data.modpack.is_some() && !item.in_pack;
                     Line::from(vec![
-                        Span::styled(if chosen { "› " } else { "  " }, t.accent()),
-                        Span::styled(if added { "+ " } else { "  " }, t.accent()),
+                        pointer,
+                        Span::raw(indent),
                         state,
                         Span::raw("  "),
-                        Span::styled(format!("{name:<name_width$}"), style),
+                        Span::styled(format!("{name:<width$}"), style),
                         Span::styled(
                             format!("  {:<10}", item.version.as_deref().unwrap_or("")),
                             t.faint(),
