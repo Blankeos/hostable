@@ -2,7 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.2] - 2026-11-04
+
+### Bug Fixes
+
+- Stop the server cards disappearing on every poll by @Blankeos
+- Do not let /etc/os-release overwrite the requested version by @Blankeos
+
+### Documentation
+
+- Add a replayed demo of the terminal app by @Blankeos
+
+### Features
+
+- Hostable upgrade, with a checksum check in the installer by @Blankeos
+
 ## [0.0.1] - 2026-11-04
+
+### Bug Fixes
+
+- Upload release files only, not the per-target build folders by @Blankeos
+- Mark hostable and hostabled as dist binaries by @Blankeos in [#3](https://github.com/Blankeos/hostable/pull/3)
 
 ### Chores
 
@@ -19,5 +39,5 @@ All notable changes to this project will be documented in this file.
 
 ### New Contributors
 
-- @Blankeos made their first contribution in [#2](https://github.com/Blankeos/hostable/pull/2)
+- @Blankeos made their first contribution
 
