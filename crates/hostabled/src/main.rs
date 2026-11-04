@@ -390,7 +390,10 @@ async fn modrinth_search(
         .unwrap_or_default();
     let mut response = reqwest::Client::new()
         .get("https://api.modrinth.com/v2/search")
-        .header("User-Agent", "hostable/0.1.0")
+        .header(
+            "User-Agent",
+            concat!("hostable/", env!("CARGO_PKG_VERSION")),
+        )
         .query(&[
             ("query", search),
             ("facets", facets.as_str()),
@@ -418,7 +421,10 @@ async fn modrinth_versions(
         .map(|version| format!(r#"["{version}"]"#));
     let mut request = reqwest::Client::new()
         .get(format!("https://api.modrinth.com/v2/project/{id}/version"))
-        .header("User-Agent", "hostable/0.1.0");
+        .header(
+            "User-Agent",
+            concat!("hostable/", env!("CARGO_PKG_VERSION")),
+        );
 
     if let Some(loaders) = &loaders {
         request = request.query(&[("loaders", loaders)]);
@@ -503,7 +509,10 @@ async fn select_modrinth_version(
         .get(format!(
             "https://api.modrinth.com/v2/project/{project_id}/version"
         ))
-        .header("User-Agent", "hostable/0.1.0");
+        .header(
+            "User-Agent",
+            concat!("hostable/", env!("CARGO_PKG_VERSION")),
+        );
     if let Some(game_version) = game_version {
         let game_versions = format!(r#"["{game_version}"]"#);
         request = request.query(&[("game_versions", game_versions.as_str())]);
@@ -530,7 +539,10 @@ async fn fetch_modrinth_version(
 ) -> Result<ModrinthVersion, ApiError> {
     Ok(client
         .get(format!("https://api.modrinth.com/v2/version/{version_id}"))
-        .header("User-Agent", "hostable/0.1.0")
+        .header(
+            "User-Agent",
+            concat!("hostable/", env!("CARGO_PKG_VERSION")),
+        )
         .send()
         .await?
         .error_for_status()?
@@ -1076,7 +1088,10 @@ async fn test_s3_settings(
 async fn public_ip() -> Result<Json<PublicIpResponse>, ApiError> {
     let ip = reqwest::Client::new()
         .get("https://api.ipify.org")
-        .header("User-Agent", "hostable/0.1.0")
+        .header(
+            "User-Agent",
+            concat!("hostable/", env!("CARGO_PKG_VERSION")),
+        )
         .send()
         .await?
         .error_for_status()?
