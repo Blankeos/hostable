@@ -111,4 +111,9 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file notes.md target/distrib/*
+        run: |
+          set -eu
+          # target/distrib also holds the per-target build folders; upload files only.
+          find target/distrib -maxdepth 1 -type f | sort > assets.txt
+          cat assets.txt
+          xargs -a assets.txt gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file notes.md
