@@ -434,7 +434,10 @@ async fn download_to(
     tokio::fs::create_dir_all(dir).await?;
     let bytes = reqwest::Client::new()
         .get(url)
-        .header("User-Agent", "hostable/0.1.0")
+        .header(
+            "User-Agent",
+            concat!("hostable/", env!("CARGO_PKG_VERSION")),
+        )
         .send()
         .await?
         .error_for_status()?
