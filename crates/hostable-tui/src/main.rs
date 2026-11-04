@@ -6,8 +6,8 @@ mod upgrade;
 use anyhow::Result;
 use app::App;
 use clap::Parser;
-use crossterm::event::{self, Event};
-use std::path::PathBuf;
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, MouseEventKind};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[derive(Debug, Parser)]
@@ -38,6 +38,7 @@ fn main() -> Result<()> {
     // `init` also installs a panic hook, so a crash restores the terminal.
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, args.daemon_url, args.operator_token);
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
 }
@@ -53,14 +54,32 @@ fn run(
     app.refresh_servers();
     app.refresh_public_ip();
 
+    let mut mouse = false;
     loop {
+        if let Some(path) = app.take_pending_edit() {
+            let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+            mouse = false;
+            edit_file(terminal, &mut app, &path);
+        }
+        if app.wants_mouse() != mouse {
+            mouse = app.wants_mouse();
+            let _ = if mouse {
+                crossterm::execute!(std::io::stdout(), EnableMouseCapture)
+            } else {
+                crossterm::execute!(std::io::stdout(), DisableMouseCapture)
+            };
+        }
         terminal.draw(|frame| app.draw(frame))?;
 
         if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()?
-                && app.handle_event(key)
-            {
-                break;
+            match event::read()? {
+                Event::Key(key) if app.handle_event(key) => break,
+                Event::Mouse(event) => match event.kind {
+                    MouseEventKind::ScrollUp => app.handle_wheel(true),
+                    MouseEventKind::ScrollDown => app.handle_wheel(false),
+                    _ => {}
+                },
+                _ => {}
             }
         } else {
             app.tick();
@@ -68,4 +87,56 @@ fn run(
     }
 
     Ok(())
+}
+
+/// Hand the terminal to the user's editor (vi unless `$VISUAL` or `$EDITOR` says otherwise),
+/// then take it back. The editor runs as the TUI's user, so a root-owned write must not
+/// leave the game server unable to read its own file: owner and mode are put back.
+fn edit_file(terminal: &mut ratatui::DefaultTerminal, app: &mut App, path: &Path) {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let before = std::fs::metadata(path).ok();
+    let editor = ["VISUAL", "EDITOR"]
+        .iter()
+        .find_map(|key| {
+            std::env::var(key)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "vi".to_string());
+    let mut words = editor.split_whitespace();
+    let program = words.next().unwrap_or("vi").to_string();
+
+    ratatui::restore();
+    let result = std::process::Command::new(program)
+        .args(words)
+        .arg(path)
+        .status();
+    *terminal = ratatui::init();
+
+    let after = std::fs::metadata(path).ok();
+    if let (Some(before), Some(after)) = (&before, &after) {
+        if before.uid() != after.uid() || before.gid() != after.gid() {
+            let _ = std::os::unix::fs::chown(path, Some(before.uid()), Some(before.gid()));
+        }
+        if before.mode() != after.mode() {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(before.mode()));
+        }
+    }
+    let changed = match (&before, &after) {
+        (Some(before), Some(after)) => {
+            before.mtime() != after.mtime() || before.mtime_nsec() != after.mtime_nsec()
+        }
+        _ => false,
+    };
+    let error = match result {
+        Ok(_) => None,
+        Err(error) => Some(error.to_string()),
+    };
+    app.finish_edit(&name, changed, error);
+    let _ = terminal.clear();
 }

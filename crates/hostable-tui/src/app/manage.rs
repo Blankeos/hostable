@@ -10,7 +10,7 @@ use super::{
 use crate::theme::{Health, Level, status_badge, theme};
 use crossterm::event::KeyCode;
 use hostable_core::GameKind;
-use hostable_core::minecraft_admin::{InstalledMod, OnlinePlayers, PlayerEntry};
+use hostable_core::minecraft_admin::{InstalledMod, ModpackInfo, OnlinePlayers, PlayerEntry};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
@@ -31,14 +31,25 @@ pub(super) enum ManageTab {
     Console,
     Players,
     Mods,
+    Config,
 }
 
 impl ManageTab {
+    fn hint(self) -> &'static str {
+        match self {
+            ManageTab::Console => "console",
+            ManageTab::Players => "players",
+            ManageTab::Mods => "mods",
+            ManageTab::Config => "config",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             ManageTab::Console => "Console",
             ManageTab::Players => "Players",
             ManageTab::Mods => "Mods",
+            ManageTab::Config => "Config",
         }
     }
 }
@@ -133,6 +144,27 @@ pub(super) struct ModsData {
     pub game_version: Option<String>,
     pub loader: Option<String>,
     pub items: Vec<InstalledMod>,
+    #[serde(default)]
+    pub modpack: Option<ModpackInfo>,
+}
+
+/// Which mods the list shows when the server was built from a modpack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum ModScope {
+    #[default]
+    All,
+    Pack,
+    Added,
+}
+
+impl ModScope {
+    fn next(self) -> Self {
+        match self {
+            ModScope::All => ModScope::Pack,
+            ModScope::Pack => ModScope::Added,
+            ModScope::Added => ModScope::All,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -154,9 +186,44 @@ pub(super) struct ModsView {
     pub selected: usize,
     pub filter: String,
     pub filtering: bool,
+    pub scope: ModScope,
     pub search: Option<ModSearch>,
     pub pending_remove: Option<String>,
     pub restart_needed: bool,
+}
+
+/// A config file worth opening, as the daemon found it on disk.
+#[derive(Debug, Clone)]
+pub(super) struct ConfigEntry {
+    pub path: std::path::PathBuf,
+    pub name: String,
+    pub about: &'static str,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ConfigView {
+    pub files: Vec<ConfigEntry>,
+    pub loaded: bool,
+    pub error: Option<String>,
+    pub selected: usize,
+    pub restart_needed: bool,
+}
+
+/// What a file is for, so the list reads without opening anything.
+fn config_about(name: &str) -> &'static str {
+    match name {
+        "server.properties" => "Name, difficulty, port, view distance, whitelist",
+        "start.sh" => "Launch command and memory (-Xmx)",
+        "eula.txt" => "Minecraft EULA",
+        "ops.json" => "Operators",
+        "whitelist.json" => "Allowed players",
+        "banned-players.json" => "Banned players",
+        "banned-ips.json" => "Banned IP addresses",
+        "PalWorldSettings.ini" => "Rates, difficulty, player limit, passwords",
+        "GameUserSettings.ini" => "Map, ports, passwords, player limit",
+        "Game.ini" => "Rates, breeding, taming, per-level overrides",
+        _ => "",
+    }
 }
 
 #[derive(Debug, Default)]
@@ -168,6 +235,7 @@ pub(super) struct Manage {
     pub console: ConsoleView,
     pub players: PlayersView,
     pub mods: ModsView,
+    pub config: ConfigView,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,9 +264,14 @@ struct InstallReply {
 impl Manage {
     fn tabs(&self) -> Vec<ManageTab> {
         if self.game == Some(GameKind::Minecraft) {
-            vec![ManageTab::Console, ManageTab::Players, ManageTab::Mods]
+            vec![
+                ManageTab::Console,
+                ManageTab::Players,
+                ManageTab::Mods,
+                ManageTab::Config,
+            ]
         } else {
-            vec![ManageTab::Console]
+            vec![ManageTab::Console, ManageTab::Config]
         }
     }
 
@@ -222,6 +295,11 @@ impl Manage {
         let needle = self.mods.filter.to_lowercase();
         data.items
             .iter()
+            .filter(|item| match self.mods.scope {
+                ModScope::All => true,
+                ModScope::Pack => item.in_pack,
+                ModScope::Added => !item.in_pack,
+            })
             .filter(|item| {
                 needle.is_empty()
                     || item.filename.to_lowercase().contains(&needle)
@@ -371,7 +449,7 @@ impl App {
                 ..Manage::default()
             };
         }
-        if game != GameKind::Minecraft && tab != ManageTab::Console {
+        if game != GameKind::Minecraft && !matches!(tab, ManageTab::Console | ManageTab::Config) {
             self.status = "Players and mods are only available for Minecraft".to_string();
             return;
         }
@@ -381,6 +459,7 @@ impl App {
             ManageTab::Console => self.poll_console(),
             ManageTab::Players => self.refresh_players(),
             ManageTab::Mods => self.refresh_mods(),
+            ManageTab::Config => self.refresh_config(),
         }
     }
 
@@ -426,8 +505,117 @@ impl App {
                     self.refresh_players();
                 }
             }
-            ManageTab::Mods => {}
+            ManageTab::Mods | ManageTab::Config => {}
         }
+    }
+
+    // ---- config ----
+
+    fn refresh_config(&mut self) {
+        let id = self.manage.server_id.clone();
+        match self.api_get::<hostable_core::ConfigDocument>(
+            &format!("/api/servers/{id}/config"),
+            &[],
+            8,
+        ) {
+            Ok(document) => {
+                let files: Vec<ConfigEntry> = document
+                    .files
+                    .into_iter()
+                    .filter_map(|file| {
+                        let name = file.path.file_name()?.to_string_lossy().to_string();
+                        // Hostable's own bookkeeping, not something to hand-edit.
+                        (name != "hostable.minecraft.mods.json").then(|| ConfigEntry {
+                            about: config_about(&name),
+                            path: file.path,
+                            name,
+                        })
+                    })
+                    .collect();
+                self.manage.config.selected = self
+                    .manage
+                    .config
+                    .selected
+                    .min(files.len().saturating_sub(1));
+                self.manage.config.files = files;
+                self.manage.config.error = None;
+            }
+            Err(error) => self.manage.config.error = Some(error),
+        }
+        self.manage.config.loaded = true;
+    }
+
+    fn handle_config_tab_key(&mut self, code: KeyCode) {
+        let len = self.manage.config.files.len();
+        match code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.manage.config.selected + 1 < len {
+                    self.manage.config.selected += 1;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.manage.config.selected = self.manage.config.selected.saturating_sub(1);
+            }
+            KeyCode::Char('r') => self.refresh_config(),
+            KeyCode::Enter | KeyCode::Char('e') => {
+                if let Some(file) = self.manage.config.files.get(self.manage.config.selected) {
+                    self.pending_edit = Some(file.path.clone());
+                }
+            }
+            KeyCode::Char('R') => {
+                self.restart_selected();
+                if self.confirm.is_none() {
+                    self.manage.config.restart_needed = false;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The editor ran: say so, and flag a restart if the file really changed.
+    pub fn finish_edit(&mut self, name: &str, changed: bool, error: Option<String>) {
+        self.status = match error {
+            Some(error) => format!("Could not run the editor: {error}"),
+            None if changed => {
+                self.manage.config.restart_needed = true;
+                format!("Saved {name}. Restart the server to apply it.")
+            }
+            None => format!("No changes to {name}"),
+        };
+    }
+
+    /// The mouse wheel only matters inside a server's tabs; elsewhere the terminal keeps it
+    /// (so text can still be selected and copied).
+    pub fn wants_mouse(&self) -> bool {
+        self.mode == Mode::Manage
+    }
+
+    /// Wheel over a server tab: scrolls the log, or moves through a list.
+    pub fn handle_wheel(&mut self, up: bool) {
+        if self.mode != Mode::Manage || self.confirm.is_some() {
+            return;
+        }
+        const STEP: usize = 3;
+        match self.manage.tab {
+            ManageTab::Console => {
+                let console = &mut self.manage.console;
+                if up {
+                    console.scroll = (console.scroll + STEP).min(console.lines.len());
+                } else {
+                    console.scroll = console.scroll.saturating_sub(STEP);
+                }
+            }
+            _ => {
+                let key = if up { KeyCode::Up } else { KeyCode::Down };
+                for _ in 0..STEP {
+                    self.handle_manage_key(key);
+                }
+            }
+        }
+    }
+
+    pub fn take_pending_edit(&mut self) -> Option<std::path::PathBuf> {
+        self.pending_edit.take()
     }
 
     // ---- console ----
@@ -958,6 +1146,17 @@ impl App {
                 self.manage.mods.selected = self.manage.mods.selected.saturating_sub(10);
             }
             KeyCode::Char('/') => self.manage.mods.filtering = true,
+            KeyCode::Char('p')
+                if self
+                    .manage
+                    .mods
+                    .data
+                    .as_ref()
+                    .is_some_and(|d| d.modpack.is_some()) =>
+            {
+                self.manage.mods.scope = self.manage.mods.scope.next();
+                self.manage.mods.selected = 0;
+            }
             KeyCode::Char('r') => self.refresh_mods(),
             KeyCode::Char('o') => self.open_mod_link(),
             KeyCode::Char('a') => {
@@ -1053,7 +1252,7 @@ impl App {
 
     pub(super) fn handle_manage_key(&mut self, code: KeyCode) {
         let typing = match self.manage.tab {
-            ManageTab::Console => false,
+            ManageTab::Console | ManageTab::Config => false,
             ManageTab::Players => self.manage.players.add.is_some(),
             ManageTab::Mods => {
                 self.manage.mods.search.is_some()
@@ -1088,16 +1287,24 @@ impl App {
             ManageTab::Console => self.handle_console_tab_key(code),
             ManageTab::Players => self.handle_players_key(code),
             ManageTab::Mods => self.handle_mods_key(code),
+            ManageTab::Config => self.handle_config_tab_key(code),
         }
+    }
+
+    fn next_tab_label(&self) -> &'static str {
+        let tabs = self.manage.tabs();
+        let at = tabs
+            .iter()
+            .position(|tab| *tab == self.manage.tab)
+            .unwrap_or(0);
+        tabs[(at + 1) % tabs.len()].hint()
     }
 
     pub(super) fn manage_footer_hints(&self) -> Vec<(&'static str, &'static str)> {
         match self.manage.tab {
             ManageTab::Console => {
                 let mut hints = vec![("enter", "send"), ("↑↓", "history"), ("pgup", "scroll")];
-                if self.manage.tabs().len() > 1 {
-                    hints.push(("tab", "players"));
-                }
+                hints.push(("tab", self.next_tab_label()));
                 hints.push(("esc", "back"));
                 hints
             }
@@ -1112,6 +1319,13 @@ impl App {
                 ("w", "whitelist on/off"),
                 ("K", "kick"),
                 ("tab", "mods"),
+                ("esc", "back"),
+            ],
+            ManageTab::Config => vec![
+                ("↑↓", "select"),
+                ("enter", "open in vi"),
+                ("R", "restart"),
+                ("tab", self.next_tab_label()),
                 ("esc", "back"),
             ],
             ManageTab::Mods if self.manage.mods.search.is_some() => {
@@ -1134,16 +1348,28 @@ impl App {
             ManageTab::Mods if self.manage.mods.pending_remove.is_some() => {
                 vec![("y", "delete file"), ("any", "cancel")]
             }
-            ManageTab::Mods => vec![
-                ("a", "add"),
-                ("o", "open page"),
-                ("space", "on/off"),
-                ("d", "remove"),
-                ("/", "filter"),
-                ("R", "restart"),
-                ("tab", "console"),
-                ("esc", "back"),
-            ],
+            ManageTab::Mods => {
+                let mut hints = vec![
+                    ("a", "add"),
+                    ("o", "open page"),
+                    ("space", "on/off"),
+                    ("d", "remove"),
+                    ("/", "filter"),
+                ];
+                if self
+                    .manage
+                    .mods
+                    .data
+                    .as_ref()
+                    .is_some_and(|d| d.modpack.is_some())
+                {
+                    hints.push(("p", "pack / added"));
+                }
+                hints.push(("R", "restart"));
+                hints.push(("tab", self.next_tab_label()));
+                hints.push(("esc", "back"));
+                hints
+            }
         }
     }
 
@@ -1188,7 +1414,60 @@ impl App {
             ManageTab::Console => self.render_console_tab(frame, rows[1], rows[2]),
             ManageTab::Players => self.render_players_tab(frame, rows[1], rows[2]),
             ManageTab::Mods => self.render_mods_tab(frame, rows[1], rows[2]),
+            ManageTab::Config => self.render_config_tab(frame, rows[1], rows[2]),
         }
+    }
+
+    fn render_config_tab(&self, frame: &mut Frame<'_>, sub: Rect, area: Rect) {
+        let t = theme();
+        let config = &self.manage.config;
+        let mut spans = vec![Span::styled(
+            "Opens in vi. Changes apply after a restart.",
+            t.muted(),
+        )];
+        if config.restart_needed {
+            spans.push(Span::styled(
+                "   restart needed to apply changes (R)",
+                t.level(Level::Warn),
+            ));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), sub);
+        if !config.loaded || config.files.is_empty() {
+            let message = match (&config.error, config.loaded) {
+                (Some(error), _) => error.clone(),
+                (None, false) => "Loading…".to_string(),
+                (None, true) => {
+                    "No config files yet. Start the server once so it creates them.".to_string()
+                }
+            };
+            frame.render_widget(Paragraph::new(Span::styled(message, t.muted())), area);
+            return;
+        }
+        let width = config
+            .files
+            .iter()
+            .map(|f| f.name.chars().count())
+            .max()
+            .unwrap_or(0);
+        let lines: Vec<Line> = config
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| {
+                let chosen = index == config.selected;
+                let style = if chosen {
+                    t.accent().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                Line::from(vec![
+                    Span::styled(if chosen { "› " } else { "  " }, t.accent()),
+                    Span::styled(format!("{:<width$}", file.name), style),
+                    Span::styled(format!("   {}", file.about), t.faint()),
+                ])
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(Text::from(lines)), area);
     }
 
     fn render_console_tab(&self, frame: &mut Frame<'_>, sub: Rect, area: Rect) {
@@ -1454,13 +1733,32 @@ impl App {
 
         let enabled = data.items.iter().filter(|item| item.enabled).count();
         let disabled = data.items.len() - enabled;
-        let mut summary = format!(
-            "{} mod{} · {} · Minecraft {}",
-            enabled,
-            if enabled == 1 { "" } else { "s" },
+        let engine = format!(
+            "{} · Minecraft {}",
             data.server_type,
             data.game_version.as_deref().unwrap_or("unknown")
         );
+        let mut summary = match &data.modpack {
+            Some(pack) => {
+                let in_pack = data.items.iter().filter(|item| item.in_pack).count();
+                let added = data.items.len() - in_pack;
+                let name = match &pack.version {
+                    Some(version) => format!("{} {version}", pack.name),
+                    None => pack.name.clone(),
+                };
+                let scope = match mods.scope {
+                    ModScope::All => "",
+                    ModScope::Pack => " · showing pack",
+                    ModScope::Added => " · showing added",
+                };
+                format!("{name} · {in_pack} in pack · {added} added · {engine}{scope}")
+            }
+            None => format!(
+                "{} mod{} · {engine}",
+                enabled,
+                if enabled == 1 { "" } else { "s" }
+            ),
+        };
         if disabled > 0 {
             summary.push_str(&format!(" · {disabled} disabled"));
         }
@@ -1528,7 +1826,7 @@ impl App {
                 .saturating_sub(u16::from(mods.pending_remove.is_some()))
                 as usize;
             let offset = mods.selected.saturating_sub(height.saturating_sub(1));
-            let name_width = (list_area.width as usize).saturating_sub(34).clamp(12, 40);
+            let name_width = (list_area.width as usize).saturating_sub(36).clamp(12, 40);
             let lines: Vec<Line> = visible
                 .iter()
                 .enumerate()
@@ -1553,8 +1851,10 @@ impl App {
                     } else {
                         Span::styled("off", t.faint())
                     };
+                    let added = data.modpack.is_some() && !item.in_pack;
                     Line::from(vec![
                         Span::styled(if chosen { "› " } else { "  " }, t.accent()),
+                        Span::styled(if added { "+ " } else { "  " }, t.accent()),
                         state,
                         Span::raw("  "),
                         Span::styled(format!("{name:<name_width$}"), style),

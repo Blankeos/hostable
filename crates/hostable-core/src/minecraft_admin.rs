@@ -53,6 +53,92 @@ pub struct InstalledMod {
     pub title: Option<String>,
     pub version: Option<String>,
     pub project_id: Option<String>,
+    /// Part of the server's modpack, as opposed to a mod added on top.
+    #[serde(default)]
+    pub in_pack: bool,
+}
+
+/// The modpack a server was built from, read from the files the pack left behind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModpackInfo {
+    pub name: String,
+    pub version: Option<String>,
+    /// Mod jars the pack ships. `None` when only the pack's name is known.
+    pub files: Option<Vec<String>>,
+}
+
+/// Understands `modpack.json` (name + file list, used by packs such as Cobbleverse),
+/// `modrinth.index.json` (a Modrinth pack) and Hostable's own record of a pack it installed.
+pub fn detect_modpack(install_path: &Path) -> Option<ModpackInfo> {
+    let read = |name: &str| -> Option<serde_json::Value> {
+        serde_json::from_str(&fs::read_to_string(install_path.join(name)).ok()?).ok()
+    };
+    let mod_jars = |paths: Vec<&str>| -> Vec<String> {
+        let mut jars: Vec<String> = paths
+            .into_iter()
+            .filter_map(|path| path.strip_prefix("mods/"))
+            .filter(|name| !name.contains('/'))
+            .map(|name| enabled_name(name).to_string())
+            .collect();
+        jars.sort();
+        jars
+    };
+    let text = |value: &serde_json::Value, key: &str| -> Option<String> {
+        value
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    if let Some(pack) = read("modpack.json")
+        && let Some(name) = text(&pack, "modPackName")
+    {
+        let files = pack.get("file").and_then(|f| f.as_object());
+        return Some(ModpackInfo {
+            name,
+            version: text(&pack, "modPackVersion"),
+            files: files.map(|files| mod_jars(files.keys().map(String::as_str).collect())),
+        });
+    }
+    if let Some(pack) = read("modrinth.index.json")
+        && let Some(name) = text(&pack, "name")
+    {
+        let paths: Vec<&str> = pack
+            .get("files")
+            .and_then(|f| f.as_array())
+            .map(|files| {
+                files
+                    .iter()
+                    .filter_map(|file| file.get("path").and_then(|p| p.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Some(ModpackInfo {
+            name,
+            version: text(&pack, "versionId"),
+            files: Some(mod_jars(paths)),
+        });
+    }
+    let record = read("hostable.minecraft.mods.json")?;
+    let pack = record.get("modpack")?;
+    Some(ModpackInfo {
+        name: text(pack, "title")?,
+        version: text(pack, "version_number"),
+        files: None,
+    })
+}
+
+/// Flag which mods belong to the pack. With no file list, anything Hostable did not
+/// install on its own from Modrinth counts as part of the pack.
+pub fn mark_pack_mods(mods: &mut [InstalledMod], pack: &ModpackInfo) {
+    for item in mods {
+        item.in_pack = match &pack.files {
+            Some(files) => files
+                .binary_search_by(|name| name.as_str().cmp(enabled_name(&item.filename)))
+                .is_ok(),
+            None => item.project_id.is_none(),
+        };
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +216,7 @@ pub fn list_mods(install_path: &Path, dir: &Path) -> Result<Vec<InstalledMod>> {
             title: record.map(|record| record.title.clone()),
             version: record.map(|record| record.version.clone()),
             project_id: record.map(|record| record.project_id.clone()),
+            in_pack: false,
             filename,
         });
     }
@@ -495,5 +582,37 @@ mod tests {
         let root = temp_dir("fabric-launcher-none");
         fs::write(root.join("server.jar"), b"").unwrap();
         assert!(!has_fabric_launcher(&root));
+    }
+
+    #[test]
+    fn reads_modpack_json_and_flags_pack_mods() {
+        let root = temp_dir("modpack");
+        fs::write(
+            root.join("modpack.json"),
+            r#"{"modPackName":"COBBLEVERSE","modPackVersion":"1.7.42","file":{"mods/a.jar":{},"config/x.toml":{},"mods/b.jar":{}}}"#,
+        )
+        .unwrap();
+        let pack = detect_modpack(&root).unwrap();
+        assert_eq!(pack.name, "COBBLEVERSE");
+        assert_eq!(pack.version.as_deref(), Some("1.7.42"));
+        assert_eq!(
+            pack.files.as_deref(),
+            Some(&["a.jar".to_string(), "b.jar".to_string()][..])
+        );
+        let item = |filename: &str| InstalledMod {
+            filename: filename.to_string(),
+            enabled: true,
+            size: 0,
+            title: None,
+            version: None,
+            project_id: None,
+            in_pack: false,
+        };
+        let mut mods = vec![item("a.jar"), item("b.jar.disabled"), item("mine.jar")];
+        mark_pack_mods(&mut mods, &pack);
+        assert_eq!(
+            mods.iter().map(|m| m.in_pack).collect::<Vec<_>>(),
+            [true, true, false]
+        );
     }
 }

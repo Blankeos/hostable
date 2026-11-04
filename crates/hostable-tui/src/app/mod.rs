@@ -44,7 +44,6 @@ enum Mode {
     Manage,
     PickModrinth,
     PickChoice,
-    EditConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,14 +199,6 @@ struct ChoicePicker {
     selected: usize,
 }
 
-#[derive(Debug, Clone, Default)]
-struct ConfigEditor {
-    server_id: String,
-    document: Option<hostable_core::ConfigDocument>,
-    selected_file: usize,
-    buffer: String,
-}
-
 pub struct App {
     active_screen: Screen,
     mode: Mode,
@@ -218,7 +209,8 @@ pub struct App {
     admin_password: AdminPasswordDraft,
     choice_picker: ChoicePicker,
     modrinth_picker: ModrinthPicker,
-    config_editor: ConfigEditor,
+    /// A file for the main loop to open in the user's editor.
+    pending_edit: Option<std::path::PathBuf>,
     manage: manage::Manage,
     selected_server: usize,
     daemon_url: String,
@@ -281,7 +273,7 @@ impl App {
             admin_password: AdminPasswordDraft::default(),
             choice_picker: ChoicePicker::default(),
             modrinth_picker: ModrinthPicker::default(),
-            config_editor: ConfigEditor::default(),
+            pending_edit: None,
             manage: manage::Manage::default(),
             selected_server: 0,
             daemon_url,
@@ -368,10 +360,6 @@ impl App {
             self.handle_choice_key(code);
             return false;
         }
-        if self.mode == Mode::EditConfig {
-            self.handle_config_key(code);
-            return false;
-        }
 
         match code {
             KeyCode::Char('q') => return true,
@@ -433,7 +421,7 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('L') => self.open_manage(ManageTab::Console),
             KeyCode::Char('p') => self.open_manage(ManageTab::Players),
             KeyCode::Char('m') => self.open_manage(ManageTab::Mods),
-            KeyCode::Char('f') => self.open_config_editor(),
+            KeyCode::Char('f') => self.open_manage(ManageTab::Config),
             _ => {}
         }
     }
@@ -994,43 +982,6 @@ impl App {
         self.save_admin_web_settings();
     }
 
-    pub fn open_config_editor(&mut self) {
-        if self.active_screen != Screen::Server {
-            return;
-        }
-        let Some(server) = self.servers.get(self.selected_server) else {
-            self.status = "No selected server".to_string();
-            return;
-        };
-        let url = format!(
-            "{}/api/servers/{}/config",
-            self.daemon_url.trim_end_matches('/'),
-            server.id.0
-        );
-        let request = self.with_operator_token(self.client.get(url));
-
-        match request
-            .send()
-            .and_then(|response| response.error_for_status())
-            .and_then(|response| response.json::<hostable_core::ConfigDocument>())
-        {
-            Ok(document) => {
-                self.config_editor = ConfigEditor {
-                    server_id: server.id.0.clone(),
-                    document: Some(document),
-                    selected_file: 0,
-                    buffer: String::new(),
-                };
-                self.config_editor.load_selected_buffer();
-                self.mode = Mode::EditConfig;
-                self.status = "Config loaded".to_string();
-            }
-            Err(error) => {
-                self.status = format!("Failed to load config: {error}");
-            }
-        }
-    }
-
     pub fn test_s3_settings(&mut self) {
         if self.active_screen != Screen::Settings {
             return;
@@ -1063,7 +1014,6 @@ impl App {
             Mode::PickChoice => self.render_choice_picker(frame, area),
             Mode::PickModrinth => self.render_modrinth_picker(frame, area),
             Mode::Manage => self.render_manage(frame, area),
-            Mode::EditConfig => self.render_config_editor(frame, area),
             Mode::EditS3 | Mode::EditAdminWeb | Mode::EditAdminPassword => {
                 self.render_server_table(frame, area)
             }
@@ -1174,43 +1124,6 @@ impl App {
                 _ => {}
             }
         }
-    }
-
-    fn render_config_editor(&self, frame: &mut Frame<'_>, area: Rect) {
-        let Some(document) = &self.config_editor.document else {
-            frame.render_widget(Paragraph::new("No config loaded"), area);
-            return;
-        };
-        let selected = document.files.get(self.config_editor.selected_file);
-        let files = document
-            .files
-            .iter()
-            .enumerate()
-            .map(|(index, file)| {
-                let marker = if index == self.config_editor.selected_file {
-                    ">"
-                } else {
-                    " "
-                };
-                format!("{marker} {}", file.path.display())
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let title = selected
-            .map(|file| file.path.display().to_string())
-            .unwrap_or_else(|| "No editable files".to_string());
-        let preview = self
-            .config_editor
-            .buffer
-            .lines()
-            .take(16)
-            .collect::<Vec<_>>()
-            .join("\n");
-        let text = format!(
-            "Config editor\n{}\n\nFiles\n{}\n\nEditing\n{}\n\n{}\n\nF2 save   Tab next file   Esc close",
-            document.title, files, title, preview
-        );
-        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
     }
 
     fn render_settings(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -1768,63 +1681,6 @@ impl App {
             }
             Err(error) => {
                 self.status = format!("Add failed: {error}");
-            }
-        }
-    }
-
-    fn handle_config_key(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::ServerDetail;
-                self.status = "Closed config editor".to_string();
-            }
-            KeyCode::Tab => {
-                self.config_editor.next_file();
-                self.status = "Switched config file".to_string();
-            }
-            KeyCode::F(2) => self.save_config_editor(),
-            KeyCode::Enter => {
-                self.config_editor.buffer.push('\n');
-            }
-            KeyCode::Backspace => {
-                self.config_editor.buffer.pop();
-            }
-            KeyCode::Char(ch) => {
-                self.config_editor.buffer.push(ch);
-            }
-            _ => {}
-        }
-    }
-
-    fn save_config_editor(&mut self) {
-        let Some(document) = &mut self.config_editor.document else {
-            self.status = "No config loaded".to_string();
-            return;
-        };
-        let Some(file) = document.files.get_mut(self.config_editor.selected_file) else {
-            self.status = "No config file selected".to_string();
-            return;
-        };
-        file.contents = self.config_editor.buffer.clone();
-        let patch = hostable_core::ConfigPatch {
-            files: vec![file.clone()],
-        };
-        let url = format!(
-            "{}/api/servers/{}/config",
-            self.daemon_url.trim_end_matches('/'),
-            self.config_editor.server_id
-        );
-        let request = self.with_operator_token(self.client.put(url).json(&patch));
-
-        match request
-            .send()
-            .and_then(|response| response.error_for_status())
-        {
-            Ok(_) => {
-                self.status = "Config saved".to_string();
-            }
-            Err(error) => {
-                self.status = format!("Failed to save config: {error}");
             }
         }
     }
@@ -2482,28 +2338,6 @@ impl Default for S3Draft {
             access_key_env: "AWS_ACCESS_KEY_ID".to_string(),
             secret_key_env: "AWS_SECRET_ACCESS_KEY".to_string(),
         }
-    }
-}
-
-impl ConfigEditor {
-    fn load_selected_buffer(&mut self) {
-        self.buffer = self
-            .document
-            .as_ref()
-            .and_then(|document| document.files.get(self.selected_file))
-            .map(|file| file.contents.clone())
-            .unwrap_or_default();
-    }
-
-    fn next_file(&mut self) {
-        let Some(document) = &self.document else {
-            return;
-        };
-        if document.files.is_empty() {
-            return;
-        }
-        self.selected_file = (self.selected_file + 1) % document.files.len();
-        self.load_selected_buffer();
     }
 }
 
