@@ -19,6 +19,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use serde::{Deserialize, de::DeserializeOwned};
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 const MAX_CONSOLE_LINES: usize = 2000;
@@ -129,8 +130,67 @@ impl PlayerColumn {
     }
 }
 
+/// Viewport of a list, kept apart from the selection like lazygit does it: keys move the
+/// selection and only scroll once it touches an edge; the wheel moves the viewport and
+/// leaves the selection where it is.
+#[derive(Debug, Default)]
+pub(super) struct ListScroll {
+    offset: Cell<usize>,
+    seen: Cell<usize>,
+    area: Cell<Rect>,
+}
+
+impl ListScroll {
+    pub fn clear_area(&self) {
+        self.area.set(Rect::default());
+    }
+
+    /// First visible row. Called while drawing with the room the list has.
+    pub fn window(&self, selected: usize, len: usize, area: Rect) -> usize {
+        let height = area.height as usize;
+        self.area.set(area);
+        let mut offset = self.offset.get();
+        if self.seen.get() != selected {
+            if selected < offset {
+                offset = selected;
+            } else if height > 0 && selected >= offset + height {
+                offset = selected + 1 - height;
+            }
+            self.seen.set(selected);
+        }
+        offset = offset.min(len.saturating_sub(height));
+        self.offset.set(offset);
+        offset
+    }
+
+    pub fn contains(&self, col: u16, row: u16) -> bool {
+        let a = self.area.get();
+        a.width > 0 && col >= a.x && col < a.x + a.width && row >= a.y && row < a.y + a.height
+    }
+
+    pub fn scroll(&self, up: bool, len: usize, step: usize) {
+        let max = len.saturating_sub(self.area.get().height as usize);
+        let offset = self.offset.get();
+        self.offset.set(if up {
+            offset.saturating_sub(step)
+        } else {
+            (offset + step).min(max)
+        });
+    }
+
+    /// The row under a click.
+    pub fn hit(&self, col: u16, row: u16, len: usize) -> Option<usize> {
+        if !self.contains(col, row) {
+            return None;
+        }
+        let index = self.offset.get() + (row - self.area.get().y) as usize;
+        (index < len).then_some(index)
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct PlayersView {
+    pub scrolls: [ListScroll; 3],
     pub data: Option<PlayersData>,
     pub error: Option<String>,
     pub column: PlayerColumn,
@@ -165,6 +225,7 @@ pub(super) struct ModSearch {
 
 #[derive(Debug, Default)]
 pub(super) struct ModsView {
+    pub scroll: ListScroll,
     pub data: Option<ModsData>,
     pub error: Option<String>,
     pub selected: usize,
@@ -187,6 +248,7 @@ pub(super) struct ConfigEntry {
 
 #[derive(Debug, Default)]
 pub(super) struct ConfigView {
+    pub scroll: ListScroll,
     pub files: Vec<ConfigEntry>,
     pub loaded: bool,
     pub error: Option<String>,
@@ -235,6 +297,9 @@ pub(super) struct Manage {
     pub players: PlayersView,
     pub mods: ModsView,
     pub config: ConfigView,
+    /// Where the sidebar's server rows and Settings row were last drawn.
+    pub server_rows: Cell<Rect>,
+    pub settings_row: Cell<Rect>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -676,15 +741,22 @@ impl App {
         };
     }
 
-    /// The mouse wheel only matters inside a server's tabs; elsewhere the terminal keeps it
-    /// (so text can still be selected and copied).
+    /// The mouse is always ours inside the workspace; hold shift in the terminal to select text.
     pub fn wants_mouse(&self) -> bool {
-        self.mode == Mode::Manage
+        true
     }
 
-    /// Wheel over a server tab: scrolls the log, or moves through a list.
-    pub fn handle_wheel(&mut self, up: bool) {
-        if self.mode != Mode::Manage || self.confirm.is_some() {
+    fn workspace_visible(&self) -> bool {
+        self.wide
+            && matches!(self.mode, Mode::Normal | Mode::Manage)
+            && self.active_screen == super::Screen::Server
+            && self.confirm.is_none()
+            && !self.servers.is_empty()
+    }
+
+    /// Wheel over a server tab scrolls what is under the pointer and leaves the selection alone.
+    pub fn handle_wheel(&mut self, up: bool, col: u16, row: u16) {
+        if !self.workspace_visible() {
             return;
         }
         const STEP: usize = 3;
@@ -697,12 +769,107 @@ impl App {
                     console.scroll = console.scroll.saturating_sub(STEP);
                 }
             }
-            _ => {
-                let key = if up { KeyCode::Up } else { KeyCode::Down };
-                for _ in 0..STEP {
-                    self.handle_manage_key(key);
+            ManageTab::Mods => {
+                let len = self.manage.mod_rows().len();
+                self.manage.mods.scroll.scroll(up, len, STEP);
+            }
+            ManageTab::Config => {
+                let len = self.manage.config.files.len();
+                self.manage.config.scroll.scroll(up, len, STEP);
+            }
+            ManageTab::Players => {
+                for index in 0..3 {
+                    if self.manage.players.scrolls[index].contains(col, row) {
+                        let len = self
+                            .manage
+                            .column_names(PlayerColumn::from_index(index))
+                            .len();
+                        self.manage.players.scrolls[index].scroll(up, len, STEP);
+                    }
                 }
             }
+            ManageTab::Details => {}
+        }
+    }
+
+    /// Left click: pick a server, open Settings, or select the row under the pointer.
+    pub fn handle_click(&mut self, col: u16, row: u16) {
+        let inside = |rect: Rect| {
+            rect.width > 0
+                && col >= rect.x
+                && col < rect.x + rect.width
+                && row >= rect.y
+                && row < rect.y + rect.height
+        };
+        if self.confirm.is_some() || !self.wide || !matches!(self.mode, Mode::Normal | Mode::Manage)
+        {
+            return;
+        }
+        if inside(self.manage.settings_row.get()) {
+            self.mode = Mode::Normal;
+            self.active_screen = super::Screen::Settings;
+            return;
+        }
+        let rows = self.manage.server_rows.get();
+        if inside(rows) {
+            let index = (row - rows.y) as usize;
+            if index < self.servers.len() {
+                self.active_screen = super::Screen::Server;
+                self.selected_server = index;
+                self.mode = Mode::Normal;
+                self.sync_preview();
+            } else if index == self.servers.len() {
+                self.mode = Mode::Normal;
+                self.handle_server_key(KeyCode::Char('n'));
+            }
+            return;
+        }
+        if self.active_screen != super::Screen::Server {
+            return;
+        }
+        // Rows inside the tab. A click in the preview takes focus first.
+        let tab = self.manage.tab;
+        if self.mode == Mode::Normal {
+            let over_list = match tab {
+                ManageTab::Mods => self.manage.mods.scroll.contains(col, row),
+                ManageTab::Config => self.manage.config.scroll.contains(col, row),
+                ManageTab::Players => {
+                    (0..3).any(|i| self.manage.players.scrolls[i].contains(col, row))
+                }
+                _ => false,
+            };
+            if !over_list {
+                return;
+            }
+            self.open_manage(tab);
+            if self.mode != Mode::Manage {
+                return;
+            }
+        }
+        match tab {
+            ManageTab::Mods if self.manage.mods.search.is_none() && !self.manage.mods.filtering => {
+                let len = self.manage.mod_rows().len();
+                if let Some(index) = self.manage.mods.scroll.hit(col, row, len) {
+                    self.manage.mods.selected = index;
+                }
+            }
+            ManageTab::Config => {
+                let len = self.manage.config.files.len();
+                if let Some(index) = self.manage.config.scroll.hit(col, row, len) {
+                    self.manage.config.selected = index;
+                }
+            }
+            ManageTab::Players if self.manage.players.add.is_none() => {
+                for index in 0..3 {
+                    let column = PlayerColumn::from_index(index);
+                    let len = self.manage.column_names(column).len();
+                    if let Some(hit) = self.manage.players.scrolls[index].hit(col, row, len) {
+                        self.manage.players.column = column;
+                        self.manage.players.selected[index] = hit;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1685,6 +1852,7 @@ impl App {
     fn render_config_tab(&self, frame: &mut Frame<'_>, sub: Rect, area: Rect) {
         let t = theme();
         let config = &self.manage.config;
+        config.scroll.clear_area();
         let mut spans = vec![Span::styled(
             "Opens in vi. Changes apply after a restart.",
             t.muted(),
@@ -1713,10 +1881,15 @@ impl App {
             .map(|f| f.name.chars().count())
             .max()
             .unwrap_or(0);
+        let offset = config
+            .scroll
+            .window(config.selected, config.files.len(), area);
         let lines: Vec<Line> = config
             .files
             .iter()
             .enumerate()
+            .skip(offset)
+            .take(area.height as usize)
             .map(|(index, file)| {
                 let chosen = index == config.selected;
                 let style = if chosen {
@@ -1866,6 +2039,9 @@ impl App {
             area
         };
 
+        for scroll in &players.scrolls {
+            scroll.clear_area();
+        }
         let wide = area.width >= 66;
         let slots: Vec<(PlayerColumn, Rect)> = if wide {
             let parts = Layout::default()
@@ -1939,7 +2115,7 @@ impl App {
             }
             let selected = players.selected[column.index()];
             let height = inner.height as usize;
-            let offset = selected.saturating_sub(height.saturating_sub(1));
+            let offset = players.scrolls[column.index()].window(selected, entries.len(), inner);
             let lines: Vec<Line> = entries
                 .iter()
                 .enumerate()
@@ -2046,6 +2222,7 @@ impl App {
             area = rows[0];
         }
 
+        mods.scroll.clear_area();
         if let Some(search) = &mods.search {
             return self.render_mod_search(frame, area, search);
         }
@@ -2080,7 +2257,14 @@ impl App {
                 .height
                 .saturating_sub(u16::from(mods.pending_remove.is_some()))
                 as usize;
-            let offset = mods.selected.saturating_sub(height.saturating_sub(1));
+            let offset = mods.scroll.window(
+                mods.selected,
+                visible.len(),
+                Rect {
+                    height: height as u16,
+                    ..list_area
+                },
+            );
             let name_width = (list_area.width as usize).saturating_sub(38).clamp(12, 60);
             let lines: Vec<Line> = visible
                 .iter()
@@ -2300,5 +2484,50 @@ mod tests {
         assert_eq!(human_size(100), "1 KB");
         assert_eq!(compact_count(12_345), "12.3k");
         assert_eq!(compact_count(3_400_000), "3.4M");
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    fn area(height: u16) -> Rect {
+        Rect::new(0, 5, 40, height)
+    }
+
+    #[test]
+    fn keys_scroll_only_at_the_edges() {
+        let scroll = ListScroll::default();
+        // 30 rows, 10 visible, selection starts at the bottom of a scrolled view.
+        assert_eq!(scroll.window(0, 30, area(10)), 0);
+        scroll.scroll(false, 30, 10);
+        assert_eq!(scroll.window(0, 30, area(10)), 10);
+        // Wheel did not move the selection: it stays put and nothing snaps back.
+        scroll.scroll(true, 30, 3);
+        assert_eq!(scroll.window(0, 30, area(10)), 7);
+        // Moving the selection up inside the view must not scroll.
+        let scroll = ListScroll::default();
+        assert_eq!(scroll.window(9, 30, area(10)), 0);
+        assert_eq!(scroll.window(8, 30, area(10)), 0);
+        assert_eq!(scroll.window(7, 30, area(10)), 0);
+        // Past the bottom edge it scrolls by one.
+        assert_eq!(scroll.window(10, 30, area(10)), 1);
+        // Past the top edge it scrolls back.
+        scroll.scroll(false, 30, 5);
+        assert_eq!(scroll.window(10, 30, area(10)), 6);
+        assert_eq!(scroll.window(5, 30, area(10)), 5);
+    }
+
+    #[test]
+    fn wheel_stops_at_the_ends_and_clicks_map_to_rows() {
+        let scroll = ListScroll::default();
+        scroll.window(0, 30, area(10));
+        scroll.scroll(true, 30, 3);
+        assert_eq!(scroll.window(0, 30, area(10)), 0);
+        scroll.scroll(false, 30, 100);
+        assert_eq!(scroll.window(0, 30, area(10)), 20);
+        assert_eq!(scroll.hit(3, 7, 30), Some(22));
+        assert_eq!(scroll.hit(3, 4, 30), None);
+        assert_eq!(scroll.hit(3, 15, 30), None);
     }
 }
