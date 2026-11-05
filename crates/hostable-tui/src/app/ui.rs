@@ -163,6 +163,11 @@ impl App {
         }
         lines.push(Line::from(Span::styled("  + n new server", t.muted())));
         frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+        self.manage.server_rows.set(Rect {
+            y: inner.y + 2,
+            height: (self.servers.len() as u16 + 1).min(inner.height.saturating_sub(3)),
+            ..inner
+        });
 
         let settings_selected = self.active_screen == Screen::Settings;
         let foot = Rect {
@@ -186,6 +191,7 @@ impl App {
             ),
         ]);
         frame.render_widget(Paragraph::new(settings), foot);
+        self.manage.settings_row.set(foot);
 
         let main = columns[1].inner(Margin {
             horizontal: 1,
@@ -1281,7 +1287,7 @@ mod tests {
     #[test]
     fn mouse_wheel_scrolls_the_console_and_lists() {
         let mut app = fixture();
-        assert!(!app.wants_mouse());
+        app.wide = true;
         app.mode = Mode::Manage;
         app.manage.game = Some(hostable_core::GameKind::Minecraft);
         app.manage.tab = crate::app::manage::ManageTab::Console;
@@ -1295,10 +1301,10 @@ mod tests {
                     text: format!("line {index}"),
                 });
         }
-        app.handle_wheel(true);
+        app.handle_wheel(true, 0, 0);
         assert_eq!(app.manage.console.scroll, 3);
-        app.handle_wheel(false);
-        app.handle_wheel(false);
+        app.handle_wheel(false, 0, 0);
+        app.handle_wheel(false, 0, 0);
         assert_eq!(app.manage.console.scroll, 0);
     }
 
