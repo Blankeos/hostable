@@ -35,7 +35,6 @@ enum Screen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Normal,
-    ServerDetail,
     CreateServer,
     ConnectServer,
     EditS3,
@@ -200,6 +199,8 @@ struct ChoicePicker {
 }
 
 pub struct App {
+    /// Wide terminals get the server sidebar; set by the last draw.
+    wide: bool,
     active_screen: Screen,
     mode: Mode,
     create: CreateDraft,
@@ -264,6 +265,7 @@ impl App {
             )
         };
         Self {
+            wide: false,
             active_screen: Screen::Server,
             mode: Mode::Normal,
             create: CreateDraft::default(),
@@ -324,10 +326,6 @@ impl App {
             self.help = false;
             return false;
         }
-        if self.mode == Mode::ServerDetail {
-            self.handle_server_detail_key(code);
-            return false;
-        }
         if self.mode == Mode::CreateServer {
             self.handle_create_key(code);
             return false;
@@ -369,16 +367,9 @@ impl App {
                     self.active_screen = Screen::Server;
                 }
             }
-            KeyCode::Char('1') => {
-                self.active_screen = Screen::Server;
-            }
-            KeyCode::Char('2') => {
-                self.active_screen = Screen::Settings;
-                self.refresh_settings();
-                self.refresh_public_ip();
-            }
-            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.next_tab(),
-            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.previous_tab(),
+            KeyCode::Char(',') => self.open_settings(),
+            KeyCode::Tab => self.switch_tab(true),
+            KeyCode::BackTab => self.switch_tab(false),
             KeyCode::Char('r') => {
                 if self.active_screen == Screen::Server {
                     self.refresh_servers();
@@ -395,39 +386,54 @@ impl App {
         false
     }
 
-    fn handle_server_key(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Down | KeyCode::Char('j') => self.next_server(),
-            KeyCode::Up | KeyCode::Char('k') => self.previous_server(),
-            KeyCode::Enter => self.open_server_detail(),
-            KeyCode::Char('n') => self.open_create_server(),
-            KeyCode::Char('c') => self.open_connect_server(),
-            _ => {}
-        }
+    fn open_settings(&mut self) {
+        self.active_screen = Screen::Settings;
+        self.refresh_settings();
+        self.refresh_public_ip();
     }
 
-    fn handle_server_detail_key(&mut self, code: KeyCode) {
+    fn handle_server_key(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Esc => {
-                self.mode = Mode::Normal;
+            KeyCode::Down | KeyCode::Char('j') => {
+                // Past the last server is Settings, like the sidebar's foot.
+                if self.servers.is_empty() || self.selected_server + 1 >= self.servers.len() {
+                    self.open_settings();
+                } else {
+                    self.next_server();
+                }
             }
-            KeyCode::Char('r') => self.refresh_servers(),
-            KeyCode::Char('?') => self.help = true,
+            KeyCode::Up | KeyCode::Char('k') => self.previous_server(),
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                self.open_manage(self.manage.tab)
+            }
+            KeyCode::Char('n') => self.open_create_server(),
+            KeyCode::Char('c') => self.open_manage_or_connect(ManageTab::Console),
+            KeyCode::Char('p') => self.open_manage(ManageTab::Players),
+            KeyCode::Char('m') => self.open_manage(ManageTab::Mods),
+            KeyCode::Char('f') => self.open_manage(ManageTab::Config),
+            KeyCode::Char('C') => self.open_connect_server(),
             KeyCode::Char('y') => self.copy_join_address(),
             KeyCode::Char('s') => self.start_selected(),
             KeyCode::Char('x') => self.stop_selected(),
             KeyCode::Char('R') => self.restart_selected(),
             KeyCode::Char('b') => self.backup_selected(),
-            KeyCode::Char('c') | KeyCode::Char('L') => self.open_manage(ManageTab::Console),
-            KeyCode::Char('p') => self.open_manage(ManageTab::Players),
-            KeyCode::Char('m') => self.open_manage(ManageTab::Mods),
-            KeyCode::Char('f') => self.open_manage(ManageTab::Config),
             _ => {}
+        }
+    }
+
+    /// `c` used to mean "connect a folder" on the list and "console" on a
+    /// server. Console wins now that a server is always selected.
+    fn open_manage_or_connect(&mut self, tab: ManageTab) {
+        if self.servers.is_empty() {
+            self.open_connect_server();
+        } else {
+            self.open_manage(tab);
         }
     }
 
     fn handle_settings_key(&mut self, code: KeyCode) {
         match code {
+            KeyCode::Up | KeyCode::Char('k') => self.active_screen = Screen::Server,
             KeyCode::Char('e') => self.open_s3_settings(),
             KeyCode::Char('t') => self.test_s3_settings(),
             KeyCode::Char('w') => self.toggle_admin_web(),
@@ -516,7 +522,15 @@ impl App {
             self.manage_tick();
             return;
         }
-        if !matches!(self.mode, Mode::Normal | Mode::ServerDetail) {
+        if self.mode != Mode::Normal {
+            return;
+        }
+        if self.wide && self.connected == Some(true) {
+            self.sync_preview();
+            if self.manage.server_id.is_empty() {
+                return;
+            }
+            self.manage_tick();
             return;
         }
         if self.connected == Some(false) {
@@ -705,21 +719,6 @@ impl App {
         }
     }
 
-    pub fn next_tab(&mut self) {
-        self.active_screen = match self.active_screen {
-            Screen::Server => Screen::Settings,
-            Screen::Settings => Screen::Server,
-        };
-        if self.active_screen == Screen::Settings {
-            self.refresh_settings();
-            self.refresh_public_ip();
-        }
-    }
-
-    pub fn previous_tab(&mut self) {
-        self.next_tab();
-    }
-
     pub fn next_server(&mut self) {
         if self.mode == Mode::CreateServer {
             self.create.next_field();
@@ -729,6 +728,7 @@ impl App {
             return;
         }
         self.selected_server = (self.selected_server + 1) % self.servers.len();
+        self.sync_preview();
     }
 
     pub fn previous_server(&mut self) {
@@ -744,6 +744,7 @@ impl App {
         } else {
             self.selected_server - 1
         };
+        self.sync_preview();
     }
 
     pub fn start_selected(&mut self) {
@@ -760,18 +761,6 @@ impl App {
 
     pub fn backup_selected(&mut self) {
         self.run_server_action("backups/run", "backup finished");
-    }
-
-    pub fn open_server_detail(&mut self) {
-        if self.active_screen != Screen::Server {
-            return;
-        }
-        let Some(server) = self.servers.get(self.selected_server) else {
-            self.status = "No server selected".to_string();
-            return;
-        };
-        self.mode = Mode::ServerDetail;
-        self.status = format!("Opened {}", server.name);
     }
 
     pub fn open_create_server(&mut self) {
@@ -1008,7 +997,6 @@ impl App {
     fn render_servers(&self, frame: &mut Frame<'_>, area: Rect) {
         match self.mode {
             Mode::Normal => self.render_server_table(frame, area),
-            Mode::ServerDetail => self.render_server_detail(frame, area),
             Mode::CreateServer => self.render_create_server(frame, area),
             Mode::ConnectServer => self.render_connect_server(frame, area),
             Mode::PickChoice => self.render_choice_picker(frame, area),

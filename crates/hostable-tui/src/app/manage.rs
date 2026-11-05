@@ -1,5 +1,5 @@
 //! The per-server workspace: a live console, players (whitelist and ops) and
-//! mods (Modrinth search and install). Opened from the server detail screen.
+//! mods (Modrinth search and install). Reached from the sidebar.
 
 use super::link;
 use super::ui::centered;
@@ -19,6 +19,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use serde::{Deserialize, de::DeserializeOwned};
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 const MAX_CONSOLE_LINES: usize = 2000;
@@ -28,6 +29,7 @@ const PLAYERS_POLL: Duration = Duration::from_secs(4);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum ManageTab {
     #[default]
+    Details,
     Console,
     Players,
     Mods,
@@ -37,6 +39,7 @@ pub(super) enum ManageTab {
 impl ManageTab {
     fn hint(self) -> &'static str {
         match self {
+            ManageTab::Details => "details",
             ManageTab::Console => "console",
             ManageTab::Players => "players",
             ManageTab::Mods => "mods",
@@ -46,6 +49,7 @@ impl ManageTab {
 
     fn label(self) -> &'static str {
         match self {
+            ManageTab::Details => "Details",
             ManageTab::Console => "Console",
             ManageTab::Players => "Players",
             ManageTab::Mods => "Mods",
@@ -126,8 +130,67 @@ impl PlayerColumn {
     }
 }
 
+/// Viewport of a list, kept apart from the selection like lazygit does it: keys move the
+/// selection and only scroll once it touches an edge; the wheel moves the viewport and
+/// leaves the selection where it is.
+#[derive(Debug, Default)]
+pub(super) struct ListScroll {
+    offset: Cell<usize>,
+    seen: Cell<usize>,
+    area: Cell<Rect>,
+}
+
+impl ListScroll {
+    pub fn clear_area(&self) {
+        self.area.set(Rect::default());
+    }
+
+    /// First visible row. Called while drawing with the room the list has.
+    pub fn window(&self, selected: usize, len: usize, area: Rect) -> usize {
+        let height = area.height as usize;
+        self.area.set(area);
+        let mut offset = self.offset.get();
+        if self.seen.get() != selected {
+            if selected < offset {
+                offset = selected;
+            } else if height > 0 && selected >= offset + height {
+                offset = selected + 1 - height;
+            }
+            self.seen.set(selected);
+        }
+        offset = offset.min(len.saturating_sub(height));
+        self.offset.set(offset);
+        offset
+    }
+
+    pub fn contains(&self, col: u16, row: u16) -> bool {
+        let a = self.area.get();
+        a.width > 0 && col >= a.x && col < a.x + a.width && row >= a.y && row < a.y + a.height
+    }
+
+    pub fn scroll(&self, up: bool, len: usize, step: usize) {
+        let max = len.saturating_sub(self.area.get().height as usize);
+        let offset = self.offset.get();
+        self.offset.set(if up {
+            offset.saturating_sub(step)
+        } else {
+            (offset + step).min(max)
+        });
+    }
+
+    /// The row under a click.
+    pub fn hit(&self, col: u16, row: u16, len: usize) -> Option<usize> {
+        if !self.contains(col, row) {
+            return None;
+        }
+        let index = self.offset.get() + (row - self.area.get().y) as usize;
+        (index < len).then_some(index)
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct PlayersView {
+    pub scrolls: [ListScroll; 3],
     pub data: Option<PlayersData>,
     pub error: Option<String>,
     pub column: PlayerColumn,
@@ -162,6 +225,7 @@ pub(super) struct ModSearch {
 
 #[derive(Debug, Default)]
 pub(super) struct ModsView {
+    pub scroll: ListScroll,
     pub data: Option<ModsData>,
     pub error: Option<String>,
     pub selected: usize,
@@ -184,6 +248,7 @@ pub(super) struct ConfigEntry {
 
 #[derive(Debug, Default)]
 pub(super) struct ConfigView {
+    pub scroll: ListScroll,
     pub files: Vec<ConfigEntry>,
     pub loaded: bool,
     pub error: Option<String>,
@@ -232,6 +297,9 @@ pub(super) struct Manage {
     pub players: PlayersView,
     pub mods: ModsView,
     pub config: ConfigView,
+    /// Where the sidebar's server rows and Settings row were last drawn.
+    pub server_rows: Cell<Rect>,
+    pub settings_row: Cell<Rect>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -261,13 +329,14 @@ impl Manage {
     fn tabs(&self) -> Vec<ManageTab> {
         if self.game == Some(GameKind::Minecraft) {
             vec![
+                ManageTab::Details,
                 ManageTab::Console,
                 ManageTab::Players,
                 ManageTab::Mods,
                 ManageTab::Config,
             ]
         } else {
-            vec![ManageTab::Console, ManageTab::Config]
+            vec![ManageTab::Details, ManageTab::Console, ManageTab::Config]
         }
     }
 
@@ -466,12 +535,31 @@ impl App {
     }
 
     pub(super) fn open_manage(&mut self, tab: ManageTab) {
-        if self.active_screen != super::Screen::Server {
+        let unsupported = self
+            .servers
+            .get(self.selected_server)
+            .is_some_and(|server| {
+                server.game != GameKind::Minecraft
+                    && matches!(tab, ManageTab::Players | ManageTab::Mods)
+            });
+        if unsupported {
+            self.status = "Players and mods are only available for Minecraft".to_string();
             return;
+        }
+        if self.prepare_manage(tab) {
+            self.mode = Mode::Manage;
+        }
+    }
+
+    /// Points the workspace at the selected server and loads the tab's data,
+    /// without moving focus. The sidebar uses this to preview.
+    fn prepare_manage(&mut self, tab: ManageTab) -> bool {
+        if self.active_screen != super::Screen::Server {
+            return false;
         }
         let Some(server) = self.servers.get(self.selected_server) else {
             self.status = "No server selected".to_string();
-            return;
+            return false;
         };
         let same = self.manage.server_id == server.id.0;
         let game = server.game;
@@ -480,24 +568,49 @@ impl App {
                 server_id: server.id.0.clone(),
                 server_name: server.name.clone(),
                 game: Some(game),
+                tab: self.manage.tab,
                 ..Manage::default()
             };
         }
-        if game != GameKind::Minecraft && !matches!(tab, ManageTab::Console | ManageTab::Config) {
-            self.status = "Players and mods are only available for Minecraft".to_string();
-            return;
-        }
+        let tab = if self.manage.tabs().contains(&tab) {
+            tab
+        } else {
+            if same {
+                self.status = "Players and mods are only available for Minecraft".to_string();
+                return false;
+            }
+            ManageTab::Details
+        };
         self.manage.tab = tab;
-        self.mode = Mode::Manage;
         match tab {
+            ManageTab::Details => self.poll_console(),
             ManageTab::Console => self.poll_console(),
             ManageTab::Players => self.refresh_players(),
             ManageTab::Mods => self.refresh_mods(),
             ManageTab::Config => self.refresh_config(),
         }
+        true
     }
 
-    fn switch_tab(&mut self, forward: bool) {
+    /// Keeps the workspace pointed at the sidebar's selection.
+    pub(super) fn sync_preview(&mut self) {
+        if !self.wide || self.active_screen != super::Screen::Server {
+            return;
+        }
+        let Some(server) = self.servers.get(self.selected_server) else {
+            return;
+        };
+        if self.manage.server_id != server.id.0 {
+            let tab = self.manage.tab;
+            self.prepare_manage(tab);
+        }
+    }
+
+    pub(super) fn switch_tab(&mut self, forward: bool) {
+        if self.servers.is_empty() || self.active_screen != super::Screen::Server {
+            return;
+        }
+        self.sync_preview_force();
         let tabs = self.manage.tabs();
         let at = tabs
             .iter()
@@ -509,7 +622,17 @@ impl App {
             (at + tabs.len() - 1) % tabs.len()
         };
         if tabs[next] != self.manage.tab {
-            self.open_manage(tabs[next]);
+            self.prepare_manage(tabs[next]);
+        }
+    }
+
+    fn sync_preview_force(&mut self) {
+        let Some(server) = self.servers.get(self.selected_server) else {
+            return;
+        };
+        if self.manage.server_id != server.id.0 {
+            let tab = self.manage.tab;
+            self.prepare_manage(tab);
         }
     }
 
@@ -518,7 +641,7 @@ impl App {
             self.refresh_server_statuses();
         }
         match self.manage.tab {
-            ManageTab::Console => {
+            ManageTab::Details | ManageTab::Console => {
                 if self
                     .manage
                     .console
@@ -618,15 +741,22 @@ impl App {
         };
     }
 
-    /// The mouse wheel only matters inside a server's tabs; elsewhere the terminal keeps it
-    /// (so text can still be selected and copied).
+    /// The mouse is always ours inside the workspace; hold shift in the terminal to select text.
     pub fn wants_mouse(&self) -> bool {
-        self.mode == Mode::Manage
+        true
     }
 
-    /// Wheel over a server tab: scrolls the log, or moves through a list.
-    pub fn handle_wheel(&mut self, up: bool) {
-        if self.mode != Mode::Manage || self.confirm.is_some() {
+    fn workspace_visible(&self) -> bool {
+        self.wide
+            && matches!(self.mode, Mode::Normal | Mode::Manage)
+            && self.active_screen == super::Screen::Server
+            && self.confirm.is_none()
+            && !self.servers.is_empty()
+    }
+
+    /// Wheel over a server tab scrolls what is under the pointer and leaves the selection alone.
+    pub fn handle_wheel(&mut self, up: bool, col: u16, row: u16) {
+        if !self.workspace_visible() {
             return;
         }
         const STEP: usize = 3;
@@ -639,12 +769,107 @@ impl App {
                     console.scroll = console.scroll.saturating_sub(STEP);
                 }
             }
-            _ => {
-                let key = if up { KeyCode::Up } else { KeyCode::Down };
-                for _ in 0..STEP {
-                    self.handle_manage_key(key);
+            ManageTab::Mods => {
+                let len = self.manage.mod_rows().len();
+                self.manage.mods.scroll.scroll(up, len, STEP);
+            }
+            ManageTab::Config => {
+                let len = self.manage.config.files.len();
+                self.manage.config.scroll.scroll(up, len, STEP);
+            }
+            ManageTab::Players => {
+                for index in 0..3 {
+                    if self.manage.players.scrolls[index].contains(col, row) {
+                        let len = self
+                            .manage
+                            .column_names(PlayerColumn::from_index(index))
+                            .len();
+                        self.manage.players.scrolls[index].scroll(up, len, STEP);
+                    }
                 }
             }
+            ManageTab::Details => {}
+        }
+    }
+
+    /// Left click: pick a server, open Settings, or select the row under the pointer.
+    pub fn handle_click(&mut self, col: u16, row: u16) {
+        let inside = |rect: Rect| {
+            rect.width > 0
+                && col >= rect.x
+                && col < rect.x + rect.width
+                && row >= rect.y
+                && row < rect.y + rect.height
+        };
+        if self.confirm.is_some() || !self.wide || !matches!(self.mode, Mode::Normal | Mode::Manage)
+        {
+            return;
+        }
+        if inside(self.manage.settings_row.get()) {
+            self.mode = Mode::Normal;
+            self.active_screen = super::Screen::Settings;
+            return;
+        }
+        let rows = self.manage.server_rows.get();
+        if inside(rows) {
+            let index = (row - rows.y) as usize;
+            if index < self.servers.len() {
+                self.active_screen = super::Screen::Server;
+                self.selected_server = index;
+                self.mode = Mode::Normal;
+                self.sync_preview();
+            } else if index == self.servers.len() {
+                self.mode = Mode::Normal;
+                self.handle_server_key(KeyCode::Char('n'));
+            }
+            return;
+        }
+        if self.active_screen != super::Screen::Server {
+            return;
+        }
+        // Rows inside the tab. A click in the preview takes focus first.
+        let tab = self.manage.tab;
+        if self.mode == Mode::Normal {
+            let over_list = match tab {
+                ManageTab::Mods => self.manage.mods.scroll.contains(col, row),
+                ManageTab::Config => self.manage.config.scroll.contains(col, row),
+                ManageTab::Players => {
+                    (0..3).any(|i| self.manage.players.scrolls[i].contains(col, row))
+                }
+                _ => false,
+            };
+            if !over_list {
+                return;
+            }
+            self.open_manage(tab);
+            if self.mode != Mode::Manage {
+                return;
+            }
+        }
+        match tab {
+            ManageTab::Mods if self.manage.mods.search.is_none() && !self.manage.mods.filtering => {
+                let len = self.manage.mod_rows().len();
+                if let Some(index) = self.manage.mods.scroll.hit(col, row, len) {
+                    self.manage.mods.selected = index;
+                }
+            }
+            ManageTab::Config => {
+                let len = self.manage.config.files.len();
+                if let Some(index) = self.manage.config.scroll.hit(col, row, len) {
+                    self.manage.config.selected = index;
+                }
+            }
+            ManageTab::Players if self.manage.players.add.is_none() => {
+                for index in 0..3 {
+                    let column = PlayerColumn::from_index(index);
+                    let len = self.manage.column_names(column).len();
+                    if let Some(hit) = self.manage.players.scrolls[index].hit(col, row, len) {
+                        self.manage.players.column = column;
+                        self.manage.players.selected[index] = hit;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1303,9 +1528,21 @@ impl App {
 
     // ---- keys ----
 
+    fn handle_details_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char('s') => self.start_selected(),
+            KeyCode::Char('x') => self.stop_selected(),
+            KeyCode::Char('R') => self.restart_selected(),
+            KeyCode::Char('b') => self.backup_selected(),
+            KeyCode::Char('y') => self.copy_join_address(),
+            KeyCode::Char('r') => self.refresh_servers(),
+            _ => {}
+        }
+    }
+
     pub(super) fn handle_manage_key(&mut self, code: KeyCode) {
         let typing = match self.manage.tab {
-            ManageTab::Console | ManageTab::Config => false,
+            ManageTab::Details | ManageTab::Console | ManageTab::Config => false,
             ManageTab::Players => self.manage.players.add.is_some(),
             ManageTab::Mods => {
                 self.manage.mods.search.is_some()
@@ -1327,7 +1564,7 @@ impl App {
                     self.manage.mods.pending_remove = None
                 }
                 _ => {
-                    self.mode = Mode::ServerDetail;
+                    self.mode = Mode::Normal;
                 }
             }
             return;
@@ -1337,6 +1574,7 @@ impl App {
             return;
         }
         match self.manage.tab {
+            ManageTab::Details => self.handle_details_key(code),
             ManageTab::Console => self.handle_console_tab_key(code),
             ManageTab::Players => self.handle_players_key(code),
             ManageTab::Mods => self.handle_mods_key(code),
@@ -1355,10 +1593,15 @@ impl App {
 
     pub(super) fn manage_footer_hints(&self) -> Vec<(&'static str, &'static str)> {
         match self.manage.tab {
+            ManageTab::Details => vec![
+                ("y", "copy address"),
+                ("tab", self.next_tab_label()),
+                ("esc", "servers"),
+            ],
             ManageTab::Console => {
                 let mut hints = vec![("enter", "send"), ("↑↓", "history"), ("pgup", "scroll")];
                 hints.push(("tab", self.next_tab_label()));
-                hints.push(("esc", "back"));
+                hints.push(("esc", "servers"));
                 hints
             }
             ManageTab::Players if self.manage.players.add.is_some() => {
@@ -1372,14 +1615,14 @@ impl App {
                 ("w", "whitelist on/off"),
                 ("K", "kick"),
                 ("tab", "mods"),
-                ("esc", "back"),
+                ("esc", "servers"),
             ],
             ManageTab::Config => vec![
                 ("↑↓", "select"),
                 ("enter", "open in vi"),
                 ("R", "restart"),
                 ("tab", self.next_tab_label()),
-                ("esc", "back"),
+                ("esc", "servers"),
             ],
             ManageTab::Mods if self.manage.mods.search.is_some() => {
                 let enter = if self.manage.mods.search.as_ref().is_some_and(|s| s.modpacks) {
@@ -1420,7 +1663,7 @@ impl App {
                 }
                 hints.push(("R", "restart"));
                 hints.push(("tab", self.next_tab_label()));
-                hints.push(("esc", "back"));
+                hints.push(("esc", "servers"));
                 hints
             }
         }
@@ -1430,40 +1673,92 @@ impl App {
 
     pub(super) fn render_manage(&self, frame: &mut Frame<'_>, area: Rect) {
         let t = theme();
+        // Wide and tall: name on top, tabs under it, then a rule. Otherwise
+        // the name and tabs share one line.
+        let stacked = self.wide && area.height >= 18;
+        let head_rows = if stacked { 3 } else { 1 };
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
+                Constraint::Length(head_rows),
                 Constraint::Length(1),
                 Constraint::Min(3),
             ])
             .split(area);
 
         let health = Health::from_systemd(self.server_status(&self.manage.server_id));
-        let mut head = vec![Span::styled(self.manage.server_name.clone(), t.title())];
-        head.push(Span::raw("   "));
-        for tab in self.manage.tabs() {
-            if tab == self.manage.tab {
-                head.push(Span::styled(
-                    tab.label(),
-                    t.accent().add_modifier(Modifier::UNDERLINED),
-                ));
-            } else {
-                head.push(Span::styled(tab.label(), t.muted()));
+        let focused = self.mode == Mode::Manage;
+        let tab_spans = |tabs: &[ManageTab]| {
+            let mut spans = Vec::new();
+            for tab in tabs {
+                if *tab == self.manage.tab {
+                    let style = if stacked && focused {
+                        t.accent().add_modifier(Modifier::REVERSED)
+                    } else if stacked {
+                        t.title().add_modifier(Modifier::UNDERLINED)
+                    } else {
+                        t.accent().add_modifier(Modifier::UNDERLINED)
+                    };
+                    spans.push(Span::styled(format!(" {} ", tab.label()), style));
+                } else {
+                    spans.push(Span::styled(format!(" {} ", tab.label()), t.muted()));
+                }
+                spans.push(Span::raw(if stacked { " " } else { "" }));
             }
+            spans
+        };
+        let tabs = self.manage.tabs();
+        let mut head = vec![Span::styled(self.manage.server_name.clone(), t.title())];
+        if stacked {
+            if let Some(server) = self
+                .servers
+                .iter()
+                .find(|s| s.id.0 == self.manage.server_id)
+            {
+                head.push(Span::styled(
+                    format!("  {}", super::game_label(server.game)),
+                    t.muted(),
+                ));
+            }
+        } else {
             head.push(Span::raw("  "));
+            head.extend(tab_spans(&tabs));
         }
+        let head_area = Rect {
+            height: 1,
+            ..rows[0]
+        };
         let columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(0), Constraint::Length(12)])
-            .split(rows[0]);
+            .split(head_area);
         frame.render_widget(Paragraph::new(Line::from(head)), columns[0]);
         frame.render_widget(
             Paragraph::new(Line::from(status_badge(health, true))).alignment(Alignment::Right),
             columns[1],
         );
+        if stacked {
+            let tab_row = Rect {
+                y: rows[0].y + 2,
+                height: 1,
+                ..rows[0]
+            };
+            let rule = Block::default()
+                .borders(Borders::TOP)
+                .border_style(t.faint());
+            frame.render_widget(rule, tab_row);
+            frame.render_widget(
+                Paragraph::new(Line::from(tab_spans(&tabs))),
+                Rect {
+                    y: rows[0].y + 1,
+                    height: 1,
+                    ..rows[0]
+                },
+            );
+        }
 
         match self.manage.tab {
+            ManageTab::Details => self.render_details_tab(frame, rows[1], rows[2]),
             ManageTab::Console => self.render_console_tab(frame, rows[1], rows[2]),
             ManageTab::Players => self.render_players_tab(frame, rows[1], rows[2]),
             ManageTab::Mods => self.render_mods_tab(frame, rows[1], rows[2]),
@@ -1471,9 +1766,93 @@ impl App {
         }
     }
 
+    fn render_details_tab(&self, frame: &mut Frame<'_>, _sub: Rect, area: Rect) {
+        let t = theme();
+        let Some(server) = self
+            .servers
+            .iter()
+            .find(|server| server.id.0 == self.manage.server_id)
+        else {
+            return;
+        };
+        let health = Health::from_systemd(self.server_status(&server.id.0));
+        let join = server
+            .ports
+            .first()
+            .map(|port| {
+                let host = self
+                    .admin_web
+                    .public_ip
+                    .clone()
+                    .unwrap_or_else(|| "<vps-ip>".to_string());
+                format!("{host}:{}", port.port)
+            })
+            .unwrap_or_else(|| "no public port".to_string());
+        let ports = server
+            .ports
+            .iter()
+            .map(|port| format!("{}/{}", port.port, super::protocol_label(port.protocol)))
+            .collect::<Vec<_>>()
+            .join("  ");
+        let kv = |label: &'static str, value: String| {
+            Line::from(vec![
+                Span::styled(format!("{label:<10}"), t.muted()),
+                Span::raw(value),
+            ])
+        };
+        let mut lines = vec![
+            Line::raw(""),
+            kv("Join", join),
+            kv("Ports", ports),
+            kv("Folder", server.install_path.display().to_string()),
+            kv("Service", server.service_name.clone()),
+        ];
+        let running = matches!(health, Health::Online | Health::Starting);
+        let actions: [(&str, &str, bool); 5] = [
+            ("s", "start", !running),
+            ("x", "stop", running),
+            ("R", "restart", running),
+            ("b", "backup", true),
+            ("y", "copy address", true),
+        ];
+        let mut spans = Vec::new();
+        for (index, (key, label, enabled)) in actions.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::raw("   "));
+            }
+            let (key_style, label_style) = if *enabled {
+                (t.key(), t.muted())
+            } else {
+                (t.faint(), t.faint())
+            };
+            spans.push(Span::styled(*key, key_style));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(*label, label_style));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::from(spans));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled("recent", t.muted())));
+        let room = (area.height as usize).saturating_sub(lines.len());
+        let width = area.width.saturating_sub(1) as usize;
+        let recent = &self.manage.console.lines;
+        for line in recent.iter().skip(recent.len().saturating_sub(room.min(8))) {
+            let style = match line.kind {
+                LineKind::Warn => t.level(Level::Warn),
+                LineKind::Error => t.level(Level::Error),
+                LineKind::Join => t.level(Level::Ok),
+                _ => Style::default(),
+            };
+            let text: String = line.text.chars().take(width).collect();
+            lines.push(Line::from(Span::styled(text, style)));
+        }
+        frame.render_widget(Paragraph::new(Text::from(lines)), area);
+    }
+
     fn render_config_tab(&self, frame: &mut Frame<'_>, sub: Rect, area: Rect) {
         let t = theme();
         let config = &self.manage.config;
+        config.scroll.clear_area();
         let mut spans = vec![Span::styled(
             "Opens in vi. Changes apply after a restart.",
             t.muted(),
@@ -1502,10 +1881,15 @@ impl App {
             .map(|f| f.name.chars().count())
             .max()
             .unwrap_or(0);
+        let offset = config
+            .scroll
+            .window(config.selected, config.files.len(), area);
         let lines: Vec<Line> = config
             .files
             .iter()
             .enumerate()
+            .skip(offset)
+            .take(area.height as usize)
             .map(|(index, file)| {
                 let chosen = index == config.selected;
                 let style = if chosen {
@@ -1655,6 +2039,9 @@ impl App {
             area
         };
 
+        for scroll in &players.scrolls {
+            scroll.clear_area();
+        }
         let wide = area.width >= 66;
         let slots: Vec<(PlayerColumn, Rect)> = if wide {
             let parts = Layout::default()
@@ -1728,7 +2115,7 @@ impl App {
             }
             let selected = players.selected[column.index()];
             let height = inner.height as usize;
-            let offset = selected.saturating_sub(height.saturating_sub(1));
+            let offset = players.scrolls[column.index()].window(selected, entries.len(), inner);
             let lines: Vec<Line> = entries
                 .iter()
                 .enumerate()
@@ -1835,6 +2222,7 @@ impl App {
             area = rows[0];
         }
 
+        mods.scroll.clear_area();
         if let Some(search) = &mods.search {
             return self.render_mod_search(frame, area, search);
         }
@@ -1869,7 +2257,14 @@ impl App {
                 .height
                 .saturating_sub(u16::from(mods.pending_remove.is_some()))
                 as usize;
-            let offset = mods.selected.saturating_sub(height.saturating_sub(1));
+            let offset = mods.scroll.window(
+                mods.selected,
+                visible.len(),
+                Rect {
+                    height: height as u16,
+                    ..list_area
+                },
+            );
             let name_width = (list_area.width as usize).saturating_sub(38).clamp(12, 60);
             let lines: Vec<Line> = visible
                 .iter()
@@ -2089,5 +2484,50 @@ mod tests {
         assert_eq!(human_size(100), "1 KB");
         assert_eq!(compact_count(12_345), "12.3k");
         assert_eq!(compact_count(3_400_000), "3.4M");
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    fn area(height: u16) -> Rect {
+        Rect::new(0, 5, 40, height)
+    }
+
+    #[test]
+    fn keys_scroll_only_at_the_edges() {
+        let scroll = ListScroll::default();
+        // 30 rows, 10 visible, selection starts at the bottom of a scrolled view.
+        assert_eq!(scroll.window(0, 30, area(10)), 0);
+        scroll.scroll(false, 30, 10);
+        assert_eq!(scroll.window(0, 30, area(10)), 10);
+        // Wheel did not move the selection: it stays put and nothing snaps back.
+        scroll.scroll(true, 30, 3);
+        assert_eq!(scroll.window(0, 30, area(10)), 7);
+        // Moving the selection up inside the view must not scroll.
+        let scroll = ListScroll::default();
+        assert_eq!(scroll.window(9, 30, area(10)), 0);
+        assert_eq!(scroll.window(8, 30, area(10)), 0);
+        assert_eq!(scroll.window(7, 30, area(10)), 0);
+        // Past the bottom edge it scrolls by one.
+        assert_eq!(scroll.window(10, 30, area(10)), 1);
+        // Past the top edge it scrolls back.
+        scroll.scroll(false, 30, 5);
+        assert_eq!(scroll.window(10, 30, area(10)), 6);
+        assert_eq!(scroll.window(5, 30, area(10)), 5);
+    }
+
+    #[test]
+    fn wheel_stops_at_the_ends_and_clicks_map_to_rows() {
+        let scroll = ListScroll::default();
+        scroll.window(0, 30, area(10));
+        scroll.scroll(true, 30, 3);
+        assert_eq!(scroll.window(0, 30, area(10)), 0);
+        scroll.scroll(false, 30, 100);
+        assert_eq!(scroll.window(0, 30, area(10)), 20);
+        assert_eq!(scroll.hit(3, 7, 30), Some(22));
+        assert_eq!(scroll.hit(3, 4, 30), None);
+        assert_eq!(scroll.hit(3, 15, 30), None);
     }
 }

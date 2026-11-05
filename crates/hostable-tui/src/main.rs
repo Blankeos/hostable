@@ -6,7 +6,9 @@ mod upgrade;
 use anyhow::Result;
 use app::App;
 use clap::Parser;
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, MouseEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind,
+};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -75,8 +77,11 @@ fn run(
             match event::read()? {
                 Event::Key(key) if app.handle_event(key) => break,
                 Event::Mouse(event) => match event.kind {
-                    MouseEventKind::ScrollUp => app.handle_wheel(true),
-                    MouseEventKind::ScrollDown => app.handle_wheel(false),
+                    MouseEventKind::ScrollUp => app.handle_wheel(true, event.column, event.row),
+                    MouseEventKind::ScrollDown => app.handle_wheel(false, event.column, event.row),
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        app.handle_click(event.column, event.row)
+                    }
                     _ => {}
                 },
                 _ => {}
