@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.6] - 2026-11-05
+
+### TUI
+
+- Server sidebar with real tabs (#10) by @Blankeos in [#10](https://github.com/Blankeos/hostable/pull/10)
+
 ## [0.0.5] - 2026-11-04
 
 ### Features
